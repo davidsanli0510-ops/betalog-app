@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:betalog-test;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+
+betalog:
+  jwt-secret: test-secret-test-secret-test-secret-test-secret-0123456789
+  jwt-days: 1
+  data-dir: ./build/test-data
+  cors-origins: "*"

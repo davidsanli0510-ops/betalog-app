@@ -1,0 +1,25 @@
+# dependencies / builds
+node_modules/
+frontend/dist/
+backend/build/
+backend/.gradle/
+.gradle/
+
+# local server data (database, token key)
+backend/data/
+data/
+
+# never commit signing keys or secrets
+*.jks
+*.keystore
+keystore.b64
+secrets.txt
+local.properties
+.env
+
+# editors / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- climbing hold -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M51,31C63,28 77,36 79,50C81,63 73,77 59,79C45,81 31,74 29,60C27,47 38,34 51,31Z" />
+    <!-- chalk smudge -->
+    <path android:fillColor="#F3D9CC"
+        android:pathData="M40,50C42,44 48,41 52,42C49,45 45,49 44,55C42,55 39,54 40,50Z" />
+    <!-- bolt -->
+    <path android:fillColor="#D4552B"
+        android:pathData="M54,49a6,6 0,1 1,0 12a6,6 0,1 1,0 -12Z" />
+    <path android:fillColor="#9E3A19"
+        android:pathData="M54,52.5a2.5,2.5 0,1 1,0 5a2.5,2.5 0,1 1,0 -5Z" />
+</vector>

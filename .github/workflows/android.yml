@@ -1,0 +1,87 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build the web app
+        run: |
+          npm ci
+          npm run build
+
+      - name: Copy it into the Android project
+        run: npx cap sync android
+
+      - name: Prepare the signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning title=서명 키 없음::KEYSTORE_B64 비밀값이 없어 임시 키로 서명했어요. 이 APK는 다음 버전으로 덮어 설치가 안 될 수 있어요."
+          fi
+
+      - name: Build the APK
+        working-directory: frontend/android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon -PversionCode=${{ github.run_number }} -PversionName=1.0.${{ github.run_number }}
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/betalog-1.0.${{ github.run_number }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: betalog-apk
+          path: betalog-*.apk
+
+      - name: Publish a release with the APK
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: 베타로그 1.0.${{ github.run_number }}
+          files: betalog-*.apk
+          make_latest: true
+          body: |
+            ## 안드로이드 설치
+            1. 아래 **Assets**에서 `betalog-1.0.${{ github.run_number }}.apk`를 폰으로 내려받아요.
+            2. 파일을 열고 '출처를 알 수 없는 앱 설치'를 허용해요.
+            3. 이미 깔려 있으면 그대로 업데이트돼요. 기록은 유지돼요.
+
+            아이폰은 웹 버전을 쓰세요: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
