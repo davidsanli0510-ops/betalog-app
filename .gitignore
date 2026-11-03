@@ -7,9 +7,9 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# local server data (database, token key)
-backend/data/
-data/
+# local server data (database, token key) — anchored so it doesn't hide frontend/src/data
+/backend/data/
+/data/
 
 # never commit signing keys or secrets
 *.jks
