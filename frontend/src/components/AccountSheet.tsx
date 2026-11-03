@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { clearAllLocal, toast, useAppState } from '../data/store';
-import { ApiError, checkServer, login, logout, normalizeServer, signup, syncNow } from '../data/sync';
+import { ApiError, DEFAULT_SERVER, checkServer, login, logout, normalizeServer, signup, syncNow } from '../data/sync';
 import { clock, fmtD, ls } from '../data/util';
 import { isApp } from '../native';
 import { SheetHead } from './common';
@@ -12,7 +12,7 @@ export function AccountSheet({ nav }: { nav: Nav }) {
   const s = useAppState();
   const acc = s.account;
   const [mode, setMode] = useState<'login' | 'signup'>('login');
-  const [server, setServer] = useState(acc?.server || ls.get('lastServer', ''));
+  const [server, setServer] = useState(acc?.server || ls.get('lastServer', '') || DEFAULT_SERVER);
   const [username, setUsername] = useState(acc?.username || '');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -20,6 +20,8 @@ export function AccountSheet({ nav }: { nav: Nav }) {
   const [err, setErr] = useState('');
   const [check, setCheck] = useState<'' | 'ok' | 'fail' | 'checking'>('');
   const [confirmOut, setConfirmOut] = useState(false);
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { if (!busy && check !== 'checking') { setSlow(false); return; } const t = setTimeout(() => setSlow(true), 4000); return () => clearTimeout(t); }, [busy, check]);
   const pending = s.problems.filter(p => p.dirty && !p.sample).length + s.logs.filter(l => l.dirty && !l.sample).length;
   const mixed = !isApp && location.protocol === 'https:' && /^http:/i.test(normalizeServer(server));
 
@@ -75,11 +77,11 @@ export function AccountSheet({ nav }: { nav: Nav }) {
             <div className="field">
               <label className="lbl" htmlFor="srv" style={{ marginBottom: 0 }}>서버 주소</label>
               <div className="row" style={{ flexWrap: 'nowrap' }}>
-                <input id="srv" inputMode="url" autoCapitalize="off" autoCorrect="off" placeholder="예: 192.168.0.10:8080" value={server} onChange={e => { setServer(e.target.value); setCheck(''); }} />
+                <input id="srv" inputMode="url" autoCapitalize="off" autoCorrect="off" placeholder="예: betalog-api.onrender.com" value={server} onChange={e => { setServer(e.target.value); setCheck(''); }} />
                 <button className="btn" style={{ flex: 'none' }} disabled={!server.trim() || check === 'checking'} onClick={async () => { setCheck('checking'); setCheck((await checkServer(server)) ? 'ok' : 'fail'); }}>{check === 'checking' ? '확인 중' : '연결 확인'}</button>
               </div>
               <span className="sub" style={{ fontSize: 12 }}>
-                {check === 'ok' ? '✓ 서버에 연결됐어요.' : check === 'fail' ? '서버에 닿지 않아요. PC에서 서버가 켜져 있고 같은 와이파이인지 확인하세요.' : 'PC에서 서버를 켜면 나오는 주소예요. 같은 와이파이에서만 연결돼요.'}
+                {check === 'checking' && slow ? '서버를 깨우는 중이에요. 무료 서버라 최대 1분쯤 걸려요.' : check === 'ok' ? '✓ 서버에 연결됐어요.' : check === 'fail' ? '서버에 닿지 않아요. 주소와 인터넷 연결을 확인하세요.' : DEFAULT_SERVER ? '기본 서버 주소가 들어 있어요. 그대로 쓰면 돼요.' : '베타로그 서버 주소예요. 예: betalog-api.onrender.com'}
               </span>
               {mixed && <div className="errbox">웹 버전(https)에서는 http 서버에 연결할 수 없어요. 안드로이드 앱을 쓰거나 서버를 https로 올린 뒤 연결하세요.</div>}
             </div>
@@ -94,7 +96,7 @@ export function AccountSheet({ nav }: { nav: Nav }) {
             <div className="field"><label className="lbl" htmlFor="pw" style={{ marginBottom: 0 }}>비밀번호 <span className="opt">6자 이상</span></label>
               <input id="pw" type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') submit(); }} /></div>
             {err && <div className="errbox">{err}</div>}
-            <button className="btn primary" style={{ width: '100%' }} disabled={busy} onClick={submit}>{busy ? '처리 중…' : mode === 'signup' ? '가입하고 동기화 시작' : '로그인'}</button>
+            <button className="btn primary" style={{ width: '100%' }} disabled={busy} onClick={submit}>{busy ? (slow ? '서버 깨우는 중… (최대 1분)' : '처리 중…') : mode === 'signup' ? '가입하고 동기화 시작' : '로그인'}</button>
           </div>
         </>
       )}

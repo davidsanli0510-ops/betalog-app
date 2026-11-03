@@ -39,7 +39,7 @@ function SyncButton({ onClick }: { onClick: () => void }) {
   const pending = s.account ? s.problems.filter(p => p.dirty && !p.sample).length + s.logs.filter(l => l.dirty && !l.sample).length : 0;
   const st = s.sync.status;
   const [cls, label] = !s.account ? ['', '로그인']
-    : st === 'syncing' ? ['wait', '동기화 중']
+    : st === 'syncing' ? ['wait', s.sync.message ? '깨우는 중' : '동기화 중']
     : st === 'relogin' ? ['err', '다시 로그인']
     : st === 'error' ? ['err', '동기화 오류']
     : pending ? ['wait', `대기 ${pending}`]

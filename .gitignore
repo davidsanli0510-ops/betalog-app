@@ -1,9 +1,11 @@
 # dependencies / builds
 node_modules/
 frontend/dist/
-backend/build/
-backend/.gradle/
-.gradle/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
 
 # local server data (database, token key)
 backend/data/

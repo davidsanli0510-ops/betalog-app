@@ -1,0 +1,22 @@
+# Render Blueprint — free sync server for BetaLog.
+# Render dashboard → New → Blueprint → pick this repository. It asks for DATABASE_URL (paste the Neon connection string).
+services:
+  - type: web
+    name: betalog-api
+    runtime: python
+    plan: free
+    region: singapore          # closest Render region to Korea
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    buildFilter:
+      paths:
+        - backend/**
+    envVars:
+      - key: DATABASE_URL       # Neon → Connection string (postgresql://...)
+        sync: false
+      - key: JWT_SECRET         # signs login tokens; generated once by Render
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: "*"
