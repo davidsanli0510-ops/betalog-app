@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { pad } from '../data/util';
 
-export interface Clip { id: string; date: number; len: number; type: string; size: number; blob: Blob; url: string; attached?: number; memOnly?: boolean }
+export interface Clip { id: string; date: number; len: number; type: string; size: number; blob: Blob; url: string; memOnly?: boolean }
 
 let dbp: Promise<IDBDatabase | null> | null = null;
 function open() {
@@ -40,11 +40,6 @@ export const Clips = {
     const c: Clip = { ...meta, blob, url: URL.createObjectURL(blob) };
     items.unshift(c); emit();
     try { await tx('readwrite', s => s.put(strip(c))); return true; } catch { c.memOnly = true; emit(); return false; }
-  },
-  async markAttached(id: string) {
-    const c = items.find(x => x.id === id); if (!c) return;
-    c.attached = (c.attached || 0) + 1; emit();
-    try { await tx('readwrite', s => s.put(strip(c))); } catch { /* ignore */ }
   },
   async del(id: string) {
     const c = items.find(x => x.id === id); if (c) URL.revokeObjectURL(c.url);

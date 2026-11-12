@@ -1,76 +1,43 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { App as CapApp } from '@capacitor/app';
-import { GYMS } from './data/grades';
-import { setState, useAppState } from './data/store';
 import { ls } from './data/util';
 import { isApp } from './native';
-import { I, Toast } from './components/common';
-import { ProblemsView } from './components/ProblemsView';
-import { ProblemForm } from './components/ProblemForm';
-import { ProblemDetail } from './components/ProblemDetail';
-import { CompareView } from './components/CompareView';
-import { RecordsView } from './components/RecordsView';
+import { Toast } from './components/common';
 import { TimerView } from './components/TimerView';
 import { RecMini, ReplayView } from './components/ReplayView';
-import { AttachSheet } from './components/AttachSheet';
 import { useInstallHint } from './install';
 
-/** iPhone Safari only: explains adding to the home screen so photos and videos are not wiped */
+/** iPhone Safari only: explains adding to the home screen so saved clips are not wiped */
 function InstallHint() {
   const { show, hide } = useInstallHint();
   if (!show) return null;
   return (
     <div className="install" id="installHint" role="note">
       <b>홈 화면에 추가해서 쓰세요</b>
-      <p>사파리에서 7일 넘게 안 열면 아이폰이 사진·영상·클립을 지울 수 있어요. 홈 화면에 추가한 앱은 지워지지 않고, 앱처럼 전체 화면으로 열려요.</p>
+      <p>사파리에서 7일 넘게 안 열면 아이폰이 저장한 클립을 지울 수 있어요. 홈 화면에 추가한 앱은 지워지지 않고, 앱처럼 전체 화면으로 열려요.</p>
       <ol><li>아래쪽 <b>공유 버튼</b>(네모에 위 화살표, 안 보이면 <b>···</b> 안에 있어요)을 누르고</li><li><b>홈 화면에 추가</b>를 누르세요.</li></ol>
-      <p className="sub">홈 화면 앱은 사파리와 저장 공간이 따로라서, 지금 사파리에 있는 기록은 옮겨지지 않아요.</p>
+      <p className="sub">홈 화면 앱은 사파리와 저장 공간이 따로라서, 지금 사파리에 저장한 클립은 옮겨지지 않아요. 필요한 클립은 먼저 사진 앱에 저장해 두세요.</p>
       <button className="btn sm" onClick={hide}>2주 동안 숨기기</button>
     </div>
   );
 }
 
-type Tab = 'problems' | 'replay' | 'compare' | 'records' | 'timer';
-type Sheet = { kind: 'detail'; id: string } | { kind: 'form'; id?: string; videos?: Blob[] } | { kind: 'attach'; clipId: string } | null;
-export interface Nav {
-  openDetail(id: string): void;
-  openForm(id?: string, videos?: Blob[]): void;
-  openAttach(clipId: string): void;
-  close(): void;
-  goTab(t: Tab): void;
-}
+type Tab = 'replay' | 'timer';
+const TAB_IDS: Tab[] = ['replay', 'timer'];
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-  { id: 'problems', label: '내 문제', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="7" cy="7" r="3" /><circle cx="17" cy="9" r="2.5" /><circle cx="9" cy="17" r="2.5" /><circle cx="17" cy="18" r="2" /></svg> },
   { id: 'replay', label: '리플레이', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="6" width="13" height="12" rx="2" /><path d="M16 10l5-3v10l-5-3" /><circle cx="9.5" cy="12" r="2" fill="currentColor" /></svg> },
-  { id: 'compare', label: '영상 비교', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="7" height="16" rx="1.5" /><rect x="14" y="4" width="7" height="16" rx="1.5" /></svg> },
-  { id: 'records', label: '기록', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19V5M4 19h16" /><path d="M7 15l4-4 3 3 5-6" /></svg> },
   { id: 'timer', label: '타이머', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2M9 2h6" /></svg> },
 ];
 
 export default function App() {
-  const s = useAppState();
-  const [tab, setTabRaw] = useState<Tab>(() => ls.get<Tab>('tab', 'problems'));
-  const [sheet, setSheet] = useState<Sheet>(null);
-  const sheetEl = useRef<HTMLDivElement>(null);
+  const [tab, setTabRaw] = useState<Tab>(() => { const t = ls.get<string>('tab', 'replay'); return TAB_IDS.includes(t as Tab) ? (t as Tab) : 'replay'; });
   const setTab = useCallback((t: Tab) => { setTabRaw(t); ls.set('tab', t); window.scrollTo(0, 0); }, []);
 
-  const nav = useMemo<Nav>(() => ({
-    openDetail: id => setSheet({ kind: 'detail', id }),
-    openForm: (id, videos) => setSheet({ kind: 'form', id, videos }),
-    openAttach: clipId => setSheet({ kind: 'attach', clipId }),
-    close: () => setSheet(null),
-    goTab: t => { setSheet(null); setTab(t); },
-  }), [setTab]);
-
-  useEffect(() => { sheetEl.current?.scrollTo(0, 0); }, [sheet?.kind, sheet && 'id' in sheet ? sheet.id : null]);
-  useEffect(() => { document.body.style.overflow = sheet ? 'hidden' : ''; }, [sheet]);
-
-  /* Android back button: close the sheet first, then go back to the first tab, then leave the app */
+  /* Android back button: go back to the replay tab first, then leave the app */
   const backRef = useRef<() => boolean>(() => false);
   backRef.current = () => {
-    if (sheet) { if (sheet.kind === 'form' && sheet.id) setSheet({ kind: 'detail', id: sheet.id }); else setSheet(null); return true; }
-    if (tab !== 'problems') { setTab('problems'); return true; }
+    if (tab !== 'replay') { setTab('replay'); return true; }
     return false;
   };
   useEffect(() => {
@@ -84,37 +51,19 @@ export default function App() {
       <div className="wrap" id="app">
         <header className="top">
           <div className="logo">베타<b>로그</b></div>
-          <div className="hdr-r">
-            {tab === 'problems' && (
-              <div className="gymsel"><I.pin />
-                <select id="gym" aria-label="지점으로 거르기" value={s.gymF} onChange={e => setState({ gymF: e.target.value })}>
-                  <option value="all">전체 지점</option>
-                  {GYMS.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                </select></div>
-            )}
-          </div>
         </header>
         <InstallHint />
         <main id="view">
-          {tab === 'problems' && <ProblemsView nav={nav} />}
-          {tab === 'replay' && <ReplayView nav={nav} />}
-          {tab === 'compare' && <CompareView />}
-          {tab === 'records' && <RecordsView nav={nav} />}
+          {tab === 'replay' && <ReplayView />}
           {tab === 'timer' && <TimerView />}
         </main>
       </div>
 
       <nav className="tabs" aria-label="메뉴"><div className="in">
-        {TABS.map(t => <button key={t.id} data-tab={t.id} aria-current={tab === t.id ? 'page' : undefined} onClick={() => { setSheet(null); setTab(t.id); }}>{t.icon}{t.label}</button>)}
+        {TABS.map(t => <button key={t.id} data-tab={t.id} aria-current={tab === t.id ? 'page' : undefined} onClick={() => setTab(t.id)}>{t.icon}{t.label}</button>)}
       </div></nav>
 
-      <RecMini show={tab !== 'replay' && !sheet} onOpen={() => setTab('replay')} />
-
-      <div id="sheet" className="sheet" hidden={!sheet} ref={sheetEl}>
-        {sheet?.kind === 'detail' && <ProblemDetail key={sheet.id} id={sheet.id} nav={nav} />}
-        {sheet?.kind === 'form' && <ProblemForm key={(sheet.id || 'new') + (sheet.videos?.length || 0)} id={sheet.id} presetVideos={sheet.videos} nav={nav} />}
-        {sheet?.kind === 'attach' && <AttachSheet clipId={sheet.clipId} nav={nav} />}
-      </div>
+      <RecMini show={tab !== 'replay'} onOpen={() => setTab('replay')} />
       <Toast />
     </>
   );

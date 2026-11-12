@@ -4,7 +4,6 @@ import { Clips, clipName, useClips } from '../replay/clips';
 import { toast } from '../data/store';
 import { clock, hms } from '../data/util';
 import { isApp, saveLabel, saveVideo } from '../native';
-import type { Nav } from '../App';
 
 let flashHook: (() => void) | null = null;
 /** 60 → "1분", 90 → "1분 30초", 45 → "45초" */
@@ -48,7 +47,7 @@ export function RecMini({ show, onOpen }: { show: boolean; onOpen: () => void })
   );
 }
 
-function ClipCard({ id, nav }: { id: string; nav: Nav }) {
+function ClipCard({ id }: { id: string }) {
   const c = Clips.get(id)!;
   const [confirm, setConfirm] = useState(false);
   if (confirm) return (
@@ -59,10 +58,9 @@ function ClipCard({ id, nav }: { id: string; nav: Nav }) {
   return (
     <div className="clip">
       <video src={c.url + '#t=0.1'} controls playsInline preload="metadata" />
-      <div className="meta"><b>{clock(c.date)}</b><span>{fmtLen(c.len)} · {(c.size / 1048576).toFixed(1)}MB</span>{c.attached ? <span className="attached">문제에 붙임</span> : null}</div>
+      <div className="meta"><b>{clock(c.date)}</b><span>{fmtLen(c.len)} · {(c.size / 1048576).toFixed(1)}MB</span></div>
       <div className="acts">
-        <button className="btn sm primary" onClick={() => nav.openAttach(id)}>문제에 붙이기</button>
-        <button className="btn sm" onClick={async () => {
+        <button className="btn sm primary" onClick={async () => {
           const r = await saveVideo(c.blob, clipName(c));
           toast(r === 'saved' ? '갤러리의 BetaLog 폴더에 저장했어요' : r === 'downloaded' ? '파일로 받았어요' : r === 'failed' ? '저장하지 못했어요. 저장 권한을 확인해 주세요' : r === 'shared' ? '공유 메뉴를 열었어요' : '취소했어요');
         }}>{saveLabel}</button>
@@ -72,7 +70,7 @@ function ClipCard({ id, nav }: { id: string; nav: Nav }) {
   );
 }
 
-export function ReplayView({ nav }: { nav: Nav }) {
+export function ReplayView() {
   const r = useReplay();
   const clips = useClips();
   const vid = useRef<HTMLVideoElement>(null);
@@ -102,7 +100,7 @@ export function ReplayView({ nav }: { nav: Nav }) {
           <ol className="rp-steps">
             <li><span className="k">1</span><div><b>폰을 거치대에 두고 카메라를 켜요</b><span>충전기를 꽂아 두면 오래 켜둘 수 있어요.</span></div></li>
             <li><span className="k">2</span><div><b>평소처럼 등반해요</b><span>저장 전까지는 아무것도 쌓이지 않아 용량 걱정이 없어요.</span></div></li>
-            <li><span className="k">3</span><div><b>1분 · 1분 30초 · 2분 중 골라 눌러요</b><span>누른 순간부터 거꾸로 그만큼이 클립이 되고, 바로 문제에 붙이거나 {isApp ? '갤러리' : '사진첩'}에 저장할 수 있어요.</span></div></li>
+            <li><span className="k">3</span><div><b>1분 · 1분 30초 · 2분 중 골라 눌러요</b><span>누른 순간부터 거꾸로 그만큼이 클립이 되고, 바로 {isApp ? '갤러리' : '사진첩'}에 저장할 수 있어요.</span></div></li>
           </ol>
           {r.error && <div className="errbox" style={{ marginBottom: 12 }}>{r.error}</div>}
           <button className="btn primary" style={{ width: '100%', fontSize: 17, padding: 16 }} disabled={r.status === 'starting'} onClick={() => replay.start()}>
@@ -160,11 +158,11 @@ export function ReplayView({ nav }: { nav: Nav }) {
 
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '26px 0 10px' }}><h3 style={{ margin: 0, fontSize: 16 }}>저장한 클립</h3>{clips.length > 0 && <span className="mono sub">{clips.length}개</span>}</div>
       <div className="clips">
-        {clips.length ? clips.map(c => <ClipCard key={c.id} id={c.id} nav={nav} />)
+        {clips.length ? clips.map(c => <ClipCard key={c.id} id={c.id} />)
           : <div className="empty span" style={{ marginTop: 0 }}><span>아직 저장한 클립이 없어요.<br />녹화 중에 '방금 거 저장'을 누르면 여기 쌓여요.</span></div>}
       </div>
       {clips.length > 0 && (
-        <div className="samplenote"><span>클립은 이 기기에만 보관돼요. 남길 클립은 문제에 붙이거나 {isApp ? '갤러리' : '사진첩'}에 저장하세요.</span>
+        <div className="samplenote"><span>클립은 이 기기에만 보관돼요. 남길 클립은 {isApp ? '갤러리' : '사진첩'}에 저장하세요.</span>
           <button className={'btn sm' + (clearArmed ? ' danger' : '')} onClick={() => { if (!clearArmed) { setClearArmed(true); return; } setClearArmed(false); Clips.clear(); toast('클립을 모두 지웠어요'); }}>
             {clearArmed ? '한 번 더 누르면 모두 지워요' : '클립 모두 지우기'}</button></div>
       )}
