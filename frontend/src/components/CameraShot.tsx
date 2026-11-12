@@ -48,7 +48,6 @@ export function CameraShot() {
   }
 
   const dur = movie?.duration || 0;
-  const opts = LENGTHS.filter(n => n < dur - 0.5);
   return (
     <section className="block camshot">
       <div className="camhead"><b>{camName}로 찍기</b><small>카메라 앱의 화질 그대로 찍고, 끝에서부터 원하는 길이만 남겨요. 리플레이처럼 계속 켜두는 방식은 아니에요.</small></div>
@@ -59,7 +58,8 @@ export function CameraShot() {
         <div className="camcut">
           <p className="sub" style={{ margin: '0 0 8px' }}>찍은 영상 <b className="mono">{fmtLen(Math.round(dur))}</b> · {(raw!.size / 1048576).toFixed(0)}MB. 남길 부분을 고르세요.</p>
           <div className="savegrid">
-            {opts.map(n => <button key={n} className="bigsave" id={'camCut' + n} disabled={!!busy} onClick={() => keep(n)}><b>{fmtLen(n)}</b><small>마지막</small></button>)}
+            {LENGTHS.map(n => <button key={n} className="bigsave" id={'camCut' + n} disabled={!!busy} onClick={() => keep(n)}>
+              <b>{fmtLen(n)}</b><small>{n < dur - 0.5 ? '마지막 ' + fmtLen(n) : `영상이 ${fmtLen(Math.round(dur))}라 전부`}</small></button>)}
             <button className="bigsave alt" id="camAll" disabled={!!busy} onClick={() => keep(null)}><b>전체</b><small>{fmtLen(Math.round(dur))}</small></button>
           </div>
           {busy === 'saving' && <p className="sub">저장하는 중…</p>}
