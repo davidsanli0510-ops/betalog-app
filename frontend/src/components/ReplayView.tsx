@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { LENGTHS, replay, useReplay, type ReplayCfg, type ReplaySnap } from '../replay/engine';
+import { LENGTHS, MAX_LEN, replay, useReplay, type ReplayCfg, type ReplaySnap } from '../replay/engine';
 import { Clips, clipName, useClips } from '../replay/clips';
 import { toast } from '../data/store';
 import { clock, hms } from '../data/util';
@@ -7,30 +7,39 @@ import { isApp, saveLabel, saveVideo } from '../native';
 import type { Nav } from '../App';
 
 let flashHook: (() => void) | null = null;
-export async function saveReplay() {
-  const r = await replay.save();
+/** 60 → "1분", 90 → "1분 30초", 45 → "45초" */
+export const fmtLen = (sec: number) => { const m = Math.floor(sec / 60), x = Math.round(sec % 60); return m ? `${m}분${x ? ` ${x}초` : ''}` : `${x}초`; };
+export async function saveReplay(len?: number) {
+  const r = await replay.save(len);
   if (!r.ok) { toast(r.message); return; }
   flashHook?.(); if (navigator.vibrate) navigator.vibrate(60);
-  toast(r.stored ? `최근 ${r.len}초를 저장했어요` : '저장 공간이 부족해 이 클립은 지금만 볼 수 있어요');
+  toast(r.stored ? `직전 ${fmtLen(r.len)}를 저장했어요` : '저장 공간이 부족해 이 클립은 지금만 볼 수 있어요');
 }
-const saveSub = (r: ReplaySnap) => r.saving ? '저장 중…' : r.buffered < 1.5 ? '녹화 준비 중'
-  : `직전 ${Math.floor(r.mode === 'exact' ? Math.min(r.buffered, r.cfg.len) : r.buffered)}초 저장`;
+const saveSub = (r: ReplaySnap) => r.saving ? '저장 중…' : r.buffered < 1.5 ? '녹화 준비 중' : `직전 ${fmtLen(Math.floor(r.buffered))} 저장`;
+/** label under each length button: how much a press would really save right now */
+const lenSub = (r: ReplaySnap, n: number) => r.saving ? '저장 중…' : r.buffered < 1.5 ? '준비 중' : r.buffered >= n - 1 ? '저장' : `지금은 ${fmtLen(Math.floor(r.buffered))}`;
+const shortLen = (n: number) => (n === 90 ? '1분30' : fmtLen(n));
 
 /* keyboard / bluetooth remote: space or enter saves while recording */
 document.addEventListener('keydown', e => {
   if (!replay.stream || e.repeat) return;
   const tag = ((e.target as HTMLElement)?.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-  if (e.code === 'Space' || e.key === 'Enter' || e.key === 'MediaPlayPause') { e.preventDefault(); saveReplay(); }
+  if (e.code === 'Space' || e.key === 'Enter' || e.key === 'MediaPlayPause') { e.preventDefault(); saveReplay(); } // last picked length
 });
 
 export function RecMini({ show, onOpen }: { show: boolean; onOpen: () => void }) {
   const r = useReplay();
-  if (!show || r.status !== 'live') return null;
+  const visible = show && r.status === 'live';
+  // lift the floating "add problem" button and toasts above the bar while it shows
+  useEffect(() => { document.body.classList.toggle('rec-on', visible); return () => document.body.classList.remove('rec-on'); }, [visible]);
+  if (!visible) return null;
   return (
     <div className="recmini" role="status">
       <i /><span onClick={onOpen} style={{ cursor: 'pointer' }}>REC {hms((Date.now() - r.startedAt) / 1000)}</span>
-      <button disabled={r.buffered < 1.5 || r.saving} onClick={saveReplay}>{r.saving ? '저장 중' : '방금 거 저장'}</button>
+      {r.mode === 'exact'
+        ? LENGTHS.map(n => <button key={n} disabled={r.buffered < 1.5 || r.saving} onClick={() => saveReplay(n)} aria-label={`직전 ${fmtLen(n)} 저장`}>{shortLen(n)}</button>)
+        : <button disabled={r.buffered < 1.5 || r.saving} onClick={() => saveReplay()}>{r.saving ? '저장 중' : '방금 거 저장'}</button>}
     </div>
   );
 }
@@ -46,7 +55,7 @@ function ClipCard({ id, nav }: { id: string; nav: Nav }) {
   return (
     <div className="clip">
       <video src={c.url + '#t=0.1'} controls playsInline preload="metadata" />
-      <div className="meta"><b>{clock(c.date)}</b><span>{c.len}초 · {(c.size / 1048576).toFixed(1)}MB</span>{c.attached ? <span className="attached">문제에 붙임</span> : null}</div>
+      <div className="meta"><b>{clock(c.date)}</b><span>{fmtLen(c.len)} · {(c.size / 1048576).toFixed(1)}MB</span>{c.attached ? <span className="attached">문제에 붙임</span> : null}</div>
       <div className="acts">
         <button className="btn sm primary" onClick={() => nav.openAttach(id)}>문제에 붙이기</button>
         <button className="btn sm" onClick={async () => {
@@ -82,14 +91,14 @@ export function ReplayView({ nav }: { nav: Nav }) {
   return (
     <>
       <h2>리플레이</h2>
-      <p className="sub">카메라를 켜두면 최근 장면만 기억해요. 완등하고 내려와서 '방금 거 저장'을 누르세요. 다른 탭으로 가도 녹화는 계속돼요.</p>
+      <p className="sub">카메라를 켜두면 최근 2분만 기억해요. 완등하고 내려와서 저장할 길이(1분·1분 30초·2분)를 골라 누르세요. 다른 탭으로 가도 녹화는 계속돼요.</p>
 
       {!on ? (
         <div style={{ marginTop: 12 }}>
           <ol className="rp-steps">
             <li><span className="k">1</span><div><b>폰을 거치대에 두고 카메라를 켜요</b><span>충전기를 꽂아 두면 오래 켜둘 수 있어요.</span></div></li>
             <li><span className="k">2</span><div><b>평소처럼 등반해요</b><span>저장 전까지는 아무것도 쌓이지 않아 용량 걱정이 없어요.</span></div></li>
-            <li><span className="k">3</span><div><b>'방금 거 저장'을 눌러요</b><span>누른 순간부터 거꾸로 60초(설정 가능)가 클립이 되고, 바로 문제에 붙이거나 {isApp ? '갤러리' : '사진첩'}에 저장할 수 있어요.</span></div></li>
+            <li><span className="k">3</span><div><b>1분 · 1분 30초 · 2분 중 골라 눌러요</b><span>누른 순간부터 거꾸로 그만큼이 클립이 되고, 바로 문제에 붙이거나 {isApp ? '갤러리' : '사진첩'}에 저장할 수 있어요.</span></div></li>
           </ol>
           {r.error && <div className="errbox" style={{ marginBottom: 12 }}>{r.error}</div>}
           <button className="btn primary" style={{ width: '100%', fontSize: 17, padding: 16 }} disabled={r.status === 'starting'} onClick={() => replay.start()}>
@@ -106,20 +115,28 @@ export function ReplayView({ nav }: { nav: Nav }) {
           <div className="stage">
             <video ref={vid} muted playsInline autoPlay />
             <div className="hud"><span className="recdot"><i />REC {hms((Date.now() - r.startedAt) / 1000)}</span></div>
-            <div className="buf"><span>버퍼 {Math.floor(Math.min(r.buffered, r.cfg.len))}초</span><span className="bar"><i style={{ width: Math.min(100, (r.buffered / r.cfg.len) * 100) + '%' }} /></span><span>{r.cfg.len}초</span></div>
+            <div className="buf"><span>버퍼 {fmtLen(Math.floor(Math.min(r.buffered, MAX_LEN)))}</span><span className="bar"><i style={{ width: Math.min(100, (r.buffered / MAX_LEN) * 100) + '%' }} /></span><span>{fmtLen(MAX_LEN)}</span></div>
             <div className={'flashfx' + (fx ? ' go' : '')} />
           </div>
-          {r.mode === 'compat' && <p className="sub" style={{ margin: '8px 0 0', fontSize: 12 }}>이 브라우저는 영상을 정확히 자르지 못해서 직전 {r.cfg.len}~{r.cfg.len * 2}초가 저장돼요. 안드로이드는 크롬, 아이폰은 최신 iOS의 사파리에서 정확히 {r.cfg.len}초로 잘려요.</p>}
+          {r.mode === 'compat' && <p className="sub" style={{ margin: '8px 0 0', fontSize: 12 }}>이 브라우저는 영상을 정확히 자르지 못해서 길이를 고를 수 없고, 직전 1~2분이 저장돼요. 안드로이드는 크롬, 아이폰은 최신 iOS의 사파리에서 길이를 골라 정확히 저장할 수 있어요.</p>}
           {r.status === 'paused' && (
             <div className="errbox" style={{ marginTop: 12 }}><b>카메라가 멈췄어요.</b> 화면을 벗어나 있으면 녹화가 멈춰요.
               <div style={{ marginTop: 8 }}><button className="btn sm primary" onClick={() => replay.restart()}>다시 시작</button></div></div>
           )}
-          <button className="bigsave" id="rpSave" disabled={r.status !== 'live' || r.buffered < 1.5 || r.saving} onClick={saveReplay}>
-            <b>방금 거 저장</b><small>{r.status === 'paused' ? '카메라 멈춤' : saveSub(r)}</small></button>
+          {r.mode === 'exact' ? (
+            <>
+              <div className="savehead">방금 거 저장<small>누른 순간부터 거꾸로 저장할 길이를 고르세요</small></div>
+              <div className="savegrid">{LENGTHS.map(n => (
+                <button key={n} className="bigsave" id={'rpSave' + n} disabled={r.status !== 'live' || r.buffered < 1.5 || r.saving} onClick={() => saveReplay(n)} aria-label={`직전 ${fmtLen(n)} 저장`}>
+                  <b>{fmtLen(n)}</b><small>{r.status === 'paused' ? '카메라 멈춤' : lenSub(r, n)}</small></button>
+              ))}</div>
+            </>
+          ) : (
+            <button className="bigsave" id="rpSave" disabled={r.status !== 'live' || r.buffered < 1.5 || r.saving} onClick={() => saveReplay()}>
+              <b>방금 거 저장</b><small>{r.status === 'paused' ? '카메라 멈춤' : saveSub(r)}</small></button>
+          )}
 
           <div className="block rp-ctrl">
-            <div className="crow"><span>저장할 길이<small>버튼을 누른 순간부터 거꾸로 이만큼 저장해요</small></span>
-              <div className="seg">{LENGTHS.map(n => <button key={n} aria-pressed={r.cfg.len === n} onClick={() => setCfg({ len: n }, `누르면 직전 ${n}초를 저장해요`)}>{n}초</button>)}</div></div>
             <div className="crow"><span>화질<small>낮을수록 배터리·발열이 덜해요</small></span>
               <div className="seg">{([480, 720, 1080] as const).map(n => <button key={n} aria-pressed={r.cfg.res === n} onClick={() => r.cfg.res !== n && setCfg({ res: n }, `${n}p로 바꾸고 버퍼를 새로 시작했어요`)}>{n}p</button>)}</div></div>
             <div className="crow"><span>소리 녹음</span>
@@ -130,7 +147,7 @@ export function ReplayView({ nav }: { nav: Nav }) {
               <button className="btn" style={{ flex: '1 1 auto' }} onClick={() => { replay.stop(); toast('카메라를 껐어요'); }}>끄기</button>
             </div>
           </div>
-          <p className="sub" style={{ marginTop: 10, fontSize: 12 }}>블루투스 키보드·리모컨의 스페이스나 엔터 키로도 저장돼요.</p>
+          <p className="sub" style={{ marginTop: 10, fontSize: 12 }}>블루투스 키보드·리모컨의 스페이스나 엔터 키로도 저장돼요. 마지막으로 고른 길이({fmtLen(r.cfg.len)})로 저장해요.</p>
         </div>
       )}
 
@@ -148,7 +165,9 @@ export function ReplayView({ nav }: { nav: Nav }) {
       {dim && (
         <div className="dim">
           <span className="recdot"><i />녹화 중 {hms((Date.now() - r.startedAt) / 1000)}</span>
-          <button className="dsave" disabled={r.saving} onClick={saveReplay}>방금 거 저장<small>{saveSub(r)}</small></button>
+          {r.mode === 'exact'
+            ? <div className="dgrid">{LENGTHS.map(n => <button key={n} className="dsave" disabled={r.saving || r.buffered < 1.5} onClick={() => saveReplay(n)}>{fmtLen(n)} 저장<small>{lenSub(r, n)}</small></button>)}</div>
+            : <button className="dsave" disabled={r.saving} onClick={() => saveReplay()}>방금 거 저장<small>{saveSub(r)}</small></button>}
           <button className="wake" onClick={() => setDim(false)}>화면 밝히기</button>
         </div>
       )}

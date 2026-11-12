@@ -13,7 +13,11 @@ import { ExactRing, canEncode, exactSupported } from './ring';
  * - compat mode (browsers without WebCodecs): two MediaRecorders run staggered, one always holds between
  *   len and 2·len seconds, and save stops that one. It cannot cut exactly, so the UI says so.
  */
-export const LENGTHS = [30, 60, 90] as const;
+/** clip lengths the user picks when saving; the buffer always holds the longest one */
+export const LENGTHS = [60, 90, 120] as const;
+export const MAX_LEN = 120;
+/** compat mode can't cut: it keeps one recorder between COMPAT_LEN and 2·COMPAT_LEN seconds old */
+const COMPAT_LEN = 60;
 export interface ReplayCfg { len: number; res: 480 | 720 | 1080; audio: boolean; facing: 'environment' | 'user' }
 export type ReplayStatus = 'off' | 'starting' | 'live' | 'paused';
 export type ReplayMode = 'exact' | 'compat';
@@ -138,7 +142,7 @@ class ReplayEngine {
   private begin() {
     this.stopRecorders();
     if (this.st.mode === 'exact') {
-      this.ring = new ExactRing(this.stream!, () => this.cfg.len, BPS[this.cfg.res], e => this.onExactFail(e));
+      this.ring = new ExactRing(this.stream!, () => MAX_LEN, BPS[this.cfg.res], e => this.onExactFail(e));
       this.ring.start(this.cfg.audio).then(() => this.emit());
       this.st.status = 'live';
       clearInterval(this.tick); this.tick = setInterval(() => this.onTick(), 250);
@@ -161,7 +165,7 @@ class ReplayEngine {
   }
   private onTick() {
     if (this.ring) { this.emit(); return; }
-    const live = this.byAge(), len = this.cfg.len;
+    const live = this.byAge(), len = COMPAT_LEN;
     if (this.st.single) { const s = live[0]; if (s && s.age() >= len * 3) { s.discard(); s.start(); } }
     else if (live.length === 2 && live[1].age() >= len) { live[0].discard(); live[0].start(); }
     this.emit();
@@ -188,11 +192,13 @@ class ReplayEngine {
   resumedNote = false;
 
   /** saves the recent footage as a clip; returns its length in seconds or an error message */
-  async save(): Promise<{ ok: true; len: number; stored: boolean } | { ok: false; message: string }> {
+  /** saves the last `len` seconds (default: the length picked last time) */
+  async save(len?: number): Promise<{ ok: true; len: number; stored: boolean } | { ok: false; message: string }> {
     if (this.st.saving || !this.stream) return { ok: false, message: '녹화 중이 아니에요' };
+    if (len && len !== this.cfg.len) { this.cfg = { ...this.cfg, len }; ls.set('replayCfg', this.cfg); }
     if (this.ring) {
       let out: { blob: Blob; len: number } | null = null;
-      try { out = this.ring.save(); } catch (e) { console.warn(e); return { ok: false, message: '저장하지 못했어요. 다시 눌러 주세요' }; }
+      try { out = this.ring.save(this.cfg.len); } catch (e) { console.warn(e); return { ok: false, message: '저장하지 못했어요. 다시 눌러 주세요' }; }
       if (!out || out.len < 1.5) return { ok: false, message: '아직 녹화된 분량이 없어요' };
       this.st.saving = true; this.emit();
       try {

@@ -3,9 +3,9 @@ import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 /**
  * Exact replay buffer built on WebCodecs.
  *
- * Camera frames are encoded to H.264 with a key frame every second and kept in memory for the last `len` seconds
- * (plus a little slack). Saving takes the chunks from the key frame at "now − len" up to now and wraps them in an MP4,
- * so a clip is the last `len` seconds (to within one second) at the moment the button is pressed. No re-encoding.
+ * Camera frames are encoded to H.264 with a key frame every second and kept in memory for the longest length the
+ * user can pick (plus a little slack). Saving `len` seconds takes the chunks from the key frame at "now − len" up to
+ * now and wraps them in an MP4, so a clip is the last `len` seconds (to within one second). No re-encoding.
  * Audio is added when the browser can encode AAC; otherwise clips are silent.
  */
 interface VChunk { chunk: EncodedVideoChunk; ts: number; key: boolean }
@@ -226,9 +226,9 @@ export class ExactRing {
   }
 
   /* ---------- save ---------- */
-  save(): { blob: Blob; len: number } | null {
+  save(len: number): { blob: Blob; len: number } | null {
     if (!this.vDecoder || !this.v.length) return null;
-    const last = this.v[this.v.length - 1].ts, cutoff = last - this.len() * 1e6;
+    const last = this.v[this.v.length - 1].ts, cutoff = last - len * 1e6;
     let start = -1;
     for (let i = 0; i < this.v.length; i++) { if (this.v[i].key && this.v[i].ts <= cutoff) start = i; }
     if (start < 0) start = this.v.findIndex(c => c.key);
