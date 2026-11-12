@@ -52,5 +52,5 @@ export const Clips = {
 export const useClips = () => useSyncExternalStore(l => { L.add(l); return () => { L.delete(l); }; }, () => items);
 export const clipName = (c: { date: number; type: string }) => {
   const d = new Date(c.date);
-  return `climb-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.${c.type.includes('mp4') ? 'mp4' : 'webm'}`;
+  return `climb-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.${c.type.includes('quicktime') ? 'mov' : c.type.includes('mp4') ? 'mp4' : 'webm'}`;
 };

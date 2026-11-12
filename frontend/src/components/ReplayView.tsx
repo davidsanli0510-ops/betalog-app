@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { LENGTHS, MAX_LEN, replay, useReplay, type ReplayCfg, type ReplaySnap, type Res } from '../replay/engine';
 import { Clips, clipName, useClips } from '../replay/clips';
 import { toast } from '../data/store';
+import { CameraShot } from './CameraShot';
 import { clock, hms } from '../data/util';
 import { isApp, saveLabel, saveVideo } from '../native';
 
@@ -58,7 +59,7 @@ function ClipCard({ id }: { id: string }) {
   return (
     <div className="clip">
       <video src={c.url + '#t=0.1'} controls playsInline preload="metadata" />
-      <div className="meta"><b>{clock(c.date)}</b><span>{fmtLen(c.len)} · {(c.size / 1048576).toFixed(1)}MB</span></div>
+      <div className="meta"><b>{clock(c.date)}</b><span>{c.len ? fmtLen(c.len) + ' · ' : ''}{(c.size / 1048576).toFixed(1)}MB</span></div>
       <div className="acts">
         <button className="btn sm primary" onClick={async () => {
           const r = await saveVideo(c.blob, clipName(c));
@@ -155,6 +156,8 @@ export function ReplayView() {
           <p className="sub" style={{ marginTop: 10, fontSize: 12 }}>블루투스 키보드·리모컨의 스페이스나 엔터 키로도 저장돼요. 마지막으로 고른 길이({fmtLen(r.cfg.len)})로 저장해요.</p>
         </div>
       )}
+
+      <CameraShot />
 
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '26px 0 10px' }}><h3 style={{ margin: 0, fontSize: 16 }}>저장한 클립</h3>{clips.length > 0 && <span className="mono sub">{clips.length}개</span>}</div>
       <div className="clips">
