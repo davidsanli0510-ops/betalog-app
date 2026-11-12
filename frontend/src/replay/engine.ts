@@ -18,14 +18,17 @@ export const LENGTHS = [60, 90, 120] as const;
 export const MAX_LEN = 120;
 /** compat mode can't cut: it keeps one recorder between COMPAT_LEN and 2·COMPAT_LEN seconds old */
 const COMPAT_LEN = 60;
-export interface ReplayCfg { len: number; res: 480 | 720 | 1080; audio: boolean; facing: 'environment' | 'user'; zoom?: number }
+export interface ReplayCfg { len: number; res: Res; audio: boolean; facing: 'environment' | 'user'; zoom?: number }
+export type Res = 480 | 720 | 1080 | 2160;
 export type ReplayStatus = 'off' | 'starting' | 'live' | 'paused';
 export type ReplayMode = 'exact' | 'compat';
-export interface ReplaySnap { status: ReplayStatus; error: string | null; saveError: string | null; mode: ReplayMode; single: boolean; silent: boolean; awake: boolean; startedAt: number; saving: boolean; buffered: number; streamId: number; cfg: ReplayCfg; zoom: number; zoomOptions: number[]; zoomBusy: boolean }
+export interface ReplaySnap { status: ReplayStatus; error: string | null; saveError: string | null; mode: ReplayMode; single: boolean; silent: boolean; awake: boolean; startedAt: number; saving: boolean; buffered: number; streamId: number; cfg: ReplayCfg; zoom: number; zoomOptions: number[]; zoomBusy: boolean; can4k: boolean; actual: string }
 
 const MIME = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
   .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(t)) || '';
-const BPS = { 480: 1_200_000, 720: 2_500_000, 1080: 5_000_000 } as const;
+/** bitrates per height. Phone camera apps use ~16 Mbps at 1080p; these stay sharp while 2 minutes still fit in memory
+ *  (1080p ≈ 150 MB, 4K ≈ 300 MB). */
+const BPS = { 480: 2_000_000, 720: 5_000_000, 1080: 10_000_000, 2160: 20_000_000 } as const;
 /** zoom steps offered like a phone camera app; only those the device can do are shown */
 const ZOOM_STEPS = [1, 2, 3, 5];
 const ULTRA_RE = /ultra ?wide|초광각|울트라|0\.5x/i;
@@ -69,8 +72,11 @@ class Seg {
 
 class ReplayEngine {
   cfg: ReplayCfg = (() => {
-    const c = ls.get<ReplayCfg>('replayCfg', { len: 60, res: 720, audio: true, facing: 'environment' });
-    return { ...c, len: (LENGTHS as readonly number[]).includes(c.len) ? c.len : 60 };
+    const c = ls.get<ReplayCfg>('replayCfg', { len: 60, res: 1080, audio: true, facing: 'environment' });
+    // one-time move to the sharper default (older versions started at 720p); 480p is no longer offered
+    let res: Res = c.res === 480 ? 720 : c.res;
+    if (!ls.get('resUp1', false)) { ls.set('resUp1', true); if (res === 720) res = 1080; }
+    return { ...c, res, len: (LENGTHS as readonly number[]).includes(c.len) ? c.len : 60 };
   })();
   stream: MediaStream | null = null;
   private segs: Seg[] = [];
@@ -80,7 +86,7 @@ class ReplayEngine {
   private hiddenAt = 0;
   private snap: ReplaySnap;
   private L = new Set<() => void>();
-  private st = { status: 'off' as ReplayStatus, error: null as string | null, saveError: null as string | null, mode: 'exact' as ReplayMode, single: false, startedAt: 0, saving: false, streamId: 0, zoom: 1, zoomOptions: [1] as number[], zoomBusy: false };
+  private st = { status: 'off' as ReplayStatus, error: null as string | null, saveError: null as string | null, mode: 'exact' as ReplayMode, single: false, startedAt: 0, saving: false, streamId: 0, zoom: 1, zoomOptions: [1] as number[], zoomBusy: false, can4k: false, actual: '' };
   /** zoom range of the main camera track, and the ultra-wide lens (for 0.5×) if the browser shows it */
   private zoomCaps: ZoomCaps = null;
   private ultraId: string | null = null;
@@ -145,12 +151,27 @@ class ReplayEngine {
     this.stream.getVideoTracks()[0]?.addEventListener('ended', () => this.onStopped());
     this.st.streamId++; this.st.startedAt = this.st.startedAt || Date.now();
     await this.detectZoom();
-    if (this.exactOk === null) this.exactOk = await canEncode(this.cfg.res, BPS[this.cfg.res]).catch(() => false);
+    if (this.exactOk === null) this.exactOk = await canEncode(Math.min(this.cfg.res, 1080), BPS[1080]).catch(() => false);
+    await this.detectRes();
+    if (this.cfg.res === 2160 && !this.st.can4k) {
+      // 4K was picked on another device/camera that had it: go back to 1080p
+      this.cfg = { ...this.cfg, res: 1080 }; ls.set('replayCfg', this.cfg);
+      this.stream.getTracks().forEach(t => t.stop()); this.stream = null;
+      return this.start();
+    }
     this.st.mode = this.exactOk || typeof MediaRecorder === 'undefined' ? 'exact' : 'compat';
     this.begin();
     await keepScreenOn(true);
     this.emit();
     return true;
+  }
+  /** what the camera really delivers, and whether 4K is possible (camera gives it and it can be encoded live) */
+  private async detectRes() {
+    const t = this.videoTrack, s = t?.getSettings?.();
+    this.st.actual = s?.width && s?.height ? `${s.width}×${s.height}` : '';
+    const c = t?.getCapabilities?.() as { width?: { max?: number }; height?: { max?: number } } | undefined;
+    const big = Math.max(c?.width?.max || 0, c?.height?.max || 0) >= 3840 && Math.min(c?.width?.max || 0, c?.height?.max || 0) >= 2160;
+    this.st.can4k = this.cfg.res === 2160 ? big || this.st.can4k : big && this.st.mode !== 'compat' && !!this.exactOk && await canEncode(2160, BPS[2160]).catch(() => false);
   }
   private get videoTrack() { return this.stream?.getVideoTracks()[0]; }
   /** works out which zoom steps this device offers and applies the saved one */

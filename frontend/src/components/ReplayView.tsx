@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { LENGTHS, MAX_LEN, replay, useReplay, type ReplayCfg, type ReplaySnap } from '../replay/engine';
+import { LENGTHS, MAX_LEN, replay, useReplay, type ReplayCfg, type ReplaySnap, type Res } from '../replay/engine';
 import { Clips, clipName, useClips } from '../replay/clips';
 import { toast } from '../data/store';
 import { clock, hms } from '../data/util';
@@ -10,6 +10,7 @@ let flashHook: (() => void) | null = null;
 /** 60 → "1분", 90 → "1분 30초", 45 → "45초" */
 export const fmtLen = (sec: number) => { const m = Math.floor(sec / 60), x = Math.round(sec % 60); return m ? `${m}분${x ? ` ${x}초` : ''}` : `${x}초`; };
 /** like a phone camera: the active step shows its ×, the others just the number */
+const resLabel = (n: Res) => (n === 2160 ? '4K' : n + 'p');
 const zoomLabel = (z: number, on: boolean) => (z === 0.5 ? '.5' : String(z)) + (on ? '×' : '');
 
 export async function saveReplay(len?: number) {
@@ -142,8 +143,8 @@ export function ReplayView({ nav }: { nav: Nav }) {
 
           {r.saveError && <div className="errbox" style={{ marginTop: 10 }}><b>저장 실패 원인</b> (캡처해서 보내주세요)<div className="mono" style={{ fontSize: 11, marginTop: 4, overflowWrap: 'anywhere' }}>{r.saveError}</div></div>}
           <div className="block rp-ctrl">
-            <div className="crow"><span>화질<small>낮을수록 배터리·발열이 덜해요</small></span>
-              <div className="seg">{([480, 720, 1080] as const).map(n => <button key={n} aria-pressed={r.cfg.res === n} onClick={() => r.cfg.res !== n && setCfg({ res: n }, `${n}p로 바꾸고 버퍼를 새로 시작했어요`)}>{n}p</button>)}</div></div>
+            <div className="crow"><span>화질<small id="rpRes">{r.cfg.res === 2160 ? '4K는 메모리를 많이 써서 폰에 따라 2분 저장이 실패할 수 있어요' : '높을수록 선명하지만 배터리·발열이 늘어요'}{r.actual && <> · 실제 {r.actual}</>}</small></span>
+              <div className="seg">{([720, 1080, ...(r.can4k || r.cfg.res === 2160 ? [2160] : [])] as Res[]).map(n => <button key={n} aria-pressed={r.cfg.res === n} onClick={() => r.cfg.res !== n && setCfg({ res: n }, `${resLabel(n)}로 바꾸고 버퍼를 새로 시작했어요`)}>{resLabel(n)}</button>)}</div></div>
             {r.zoomOptions.length <= 1 && <div className="crow" id="rpZoomNone"><span>배율<small>이 기기·브라우저는 배율 조절을 지원하지 않아요</small></span><span className="mono sub">1×</span></div>}
             <div className="crow"><span>소리 녹음</span>
               <div className="seg">{[true, false].map(a => <button key={String(a)} aria-pressed={r.cfg.audio === a} onClick={() => r.cfg.audio !== a && setCfg({ audio: a }, a ? '소리도 녹음해요' : '소리 없이 녹화해요')}>{a ? '켜기' : '끄기'}</button>)}</div></div>

@@ -15,10 +15,15 @@ interface AChunk { chunk: EncodedAudioChunk; ts: number; rt: number }
 const KEY_EVERY_US = 1_000_000;
 const SLACK_S = 3;
 // H.264 first (plays everywhere, incl. iPhone); VP9 for browsers without an H.264 encoder (e.g. Chromium on Linux)
-const CODECS: { codec: string; kind: 'avc' | 'vp9' }[] = [
-  ...['avc1.640028', 'avc1.4d0028', 'avc1.42e028', 'avc1.42001f'].map(codec => ({ codec, kind: 'avc' as const })),
-  { codec: 'vp09.00.40.08', kind: 'vp9' }, { codec: 'vp09.00.31.08', kind: 'vp9' },
-];
+// level 4.0 covers up to 1080p; bigger frames (4K) need level 5.1
+const avc = (big: boolean) => (big ? ['avc1.640033', 'avc1.4d0033'] : ['avc1.640028', 'avc1.4d0028', 'avc1.42e028', 'avc1.42001f']);
+const codecsFor = (w: number, h: number): { codec: string; kind: 'avc' | 'vp9' }[] => {
+  const big = w * h > 1920 * 1088;
+  return [
+    ...avc(big).map(codec => ({ codec, kind: 'avc' as const })),
+    ...(big ? ['vp09.00.51.08'] : ['vp09.00.40.08', 'vp09.00.31.08']).map(codec => ({ codec, kind: 'vp9' as const })),
+  ];
+};
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 type Rot = 0 | 90 | 180 | 270;
@@ -32,7 +37,7 @@ export function exactSupported(): boolean {
 }
 
 async function pickCodec(width: number, height: number, bitrate: number): Promise<{ cfg: VideoEncoderConfig; kind: 'avc' | 'vp9' } | null> {
-  for (const { codec, kind } of CODECS) {
+  for (const { codec, kind } of codecsFor(width, height)) {
     const cfg: VideoEncoderConfig = { codec, width, height, bitrate, framerate: 30, latencyMode: 'realtime', ...(kind === 'avc' ? { avc: { format: 'avc' as const } } : {}) };
     try { const r = await VideoEncoder.isConfigSupported(cfg); if (r.supported) return { cfg, kind }; } catch { /* try next */ }
   }
