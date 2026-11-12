@@ -78,6 +78,19 @@ export function ReplayView() {
   const [dim, setDim] = useState(false);
   const [fx, setFx] = useState(false);
   const [clearArmed, setClearArmed] = useState(false);
+  /** stop / restart throw the buffer away, so with something recorded they need a second tap */
+  const [armed, setArmed] = useState<'' | 'stop' | 'restart'>('');
+  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(''), 4000); return () => clearTimeout(t); }, [armed]);
+  const needsConfirm = r.status === 'live' && r.buffered >= 5;
+  const doStop = () => {
+    if (needsConfirm && armed !== 'stop') { setArmed('stop'); return; }
+    setArmed(''); replay.stop(); toast('리플레이를 종료했어요');
+  };
+  const doRestart = async () => {
+    if (needsConfirm && armed !== 'restart') { setArmed('restart'); return; }
+    setArmed('');
+    if (await replay.restart()) toast('버퍼를 비우고 처음부터 다시 녹화해요');
+  };
   useEffect(() => {
     flashHook = () => { setFx(true); requestAnimationFrame(() => requestAnimationFrame(() => setFx(false))); };
     return () => { flashHook = null; };
@@ -141,6 +154,13 @@ export function ReplayView() {
           )}
 
           {r.saveError && <div className="errbox" style={{ marginTop: 10 }}><b>저장 실패 원인</b> (캡처해서 보내주세요)<div className="mono" style={{ fontSize: 11, marginTop: 4, overflowWrap: 'anywhere' }}>{r.saveError}</div></div>}
+          <div className="rp-run">
+            <button className={'btn' + (armed === 'restart' ? ' danger' : '')} id="rpRestart" disabled={r.saving || r.status === 'starting'} onClick={doRestart}>
+              <b>↻ 재시작</b><small>{armed === 'restart' ? '한 번 더 누르면 다시 시작' : '버퍼를 비우고 새로 녹화'}</small></button>
+            <button className={'btn' + (armed === 'stop' ? ' danger' : '')} id="rpStop" disabled={r.saving} onClick={doStop}>
+              <b>■ 종료</b><small>{armed === 'stop' ? '한 번 더 누르면 종료' : '카메라 끄기'}</small></button>
+          </div>
+          {armed && <p className="sub" style={{ margin: '6px 0 0', fontSize: 12 }}>저장하지 않은 장면은 사라져요.</p>}
           <div className="block rp-ctrl">
             <div className="crow"><span>화질<small id="rpRes">{r.cfg.res === 2160 ? '4K는 메모리를 많이 써서 폰에 따라 2분 저장이 실패할 수 있어요' : '높을수록 선명하지만 배터리·발열이 늘어요'}{r.actual && <> · 실제 {r.actual}</>}</small></span>
               <div className="seg">{([720, 1080, ...(r.can4k || r.cfg.res === 2160 ? [2160] : [])] as Res[]).map(n => <button key={n} aria-pressed={r.cfg.res === n} onClick={() => r.cfg.res !== n && setCfg({ res: n }, `${resLabel(n)}로 바꾸고 버퍼를 새로 시작했어요`)}>{resLabel(n)}</button>)}</div></div>
@@ -150,7 +170,6 @@ export function ReplayView() {
             <div className="row">
               <button className="btn" style={{ flex: '1 1 auto' }} onClick={() => setCfg({ facing: r.cfg.facing === 'environment' ? 'user' : 'environment' }, r.cfg.facing === 'environment' ? '앞 카메라로 바꿨어요' : '뒤 카메라로 바꿨어요')}>카메라 전환</button>
               <button className="btn" style={{ flex: '1 1 auto' }} onClick={() => setDim(true)}>화면 어둡게</button>
-              <button className="btn" style={{ flex: '1 1 auto' }} onClick={() => { replay.stop(); toast('카메라를 껐어요'); }}>끄기</button>
             </div>
           </div>
           <p className="sub" style={{ marginTop: 10, fontSize: 12 }}>블루투스 키보드·리모컨의 스페이스나 엔터 키로도 저장돼요. 마지막으로 고른 길이({fmtLen(r.cfg.len)})로 저장해요.</p>
