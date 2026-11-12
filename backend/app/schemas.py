@@ -8,6 +8,7 @@ class AuthRequest(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     displayName: Optional[str] = None
+    inviteCode: Optional[str] = None
 
 
 class AuthResponse(BaseModel):

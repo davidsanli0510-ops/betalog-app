@@ -51,9 +51,9 @@ export async function checkServer(server: string): Promise<boolean> {
   try { await call<{ ok: boolean }>(normalizeServer(server), '/api/health'); return true; } catch { return false; }
 }
 
-async function auth(kind: 'login' | 'signup', serverRaw: string, username: string, password: string, displayName?: string) {
+async function auth(kind: 'login' | 'signup', serverRaw: string, username: string, password: string, displayName?: string, inviteCode?: string) {
   const server = normalizeServer(serverRaw);
-  const r = await call<AuthResponse>(server, '/api/auth/' + kind, { method: 'POST', body: { username, password, displayName } });
+  const r = await call<AuthResponse>(server, '/api/auth/' + kind, { method: 'POST', body: { username, password, displayName, inviteCode } });
   const account: Account = { server, token: r.token, username: r.username, displayName: r.displayName };
   // a new account starts from cursor 0 so everything already on this phone gets uploaded
   const problems = getState().problems.map(p => (p.sample ? p : { ...p, dirty: true }));
@@ -62,7 +62,7 @@ async function auth(kind: 'login' | 'signup', serverRaw: string, username: strin
   await syncNow();
 }
 export const login = (s: string, u: string, p: string) => auth('login', s, u, p);
-export const signup = (s: string, u: string, p: string, d: string) => auth('signup', s, u, p, d);
+export const signup = (s: string, u: string, p: string, d: string, code?: string) => auth('signup', s, u, p, d, code);
 
 export function logout() {
   setState({ account: null, sync: { cursor: 0, lastSync: null, status: 'off' } });

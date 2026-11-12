@@ -39,6 +39,7 @@
 |---|---|
 | `DATABASE_URL` | Neon 연결 문자열. 비어 있으면 `./data/betalog.db`(SQLite)를 써요 — Render에서는 재시작하면 사라지니 꼭 넣으세요 |
 | `JWT_SECRET` | 로그인 토큰 서명 키(32자 이상). Render가 자동으로 만들어요. 바꾸면 모두 다시 로그인해야 해요 |
+| `SIGNUP_CODE` | 초대 코드. 정해 두면 이 코드를 아는 사람만 가입할 수 있어요(공개 서버라 꼭 정하길 추천). 친구들에게만 알려 주세요 |
 | `CORS_ORIGINS` | 허용할 앱 주소(쉼표로 구분), 기본 `*` |
 
 ### 내 PC에서 서버 돌리기 (개발용)
@@ -83,3 +84,12 @@ cd frontend && npm run cap:sync && npx cap open android   # Android Studio로 �
 ## 앱 서명
 
 APK는 GitHub Secrets의 키로 서명돼요: `KEYSTORE_B64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`. **키를 잃어버리면 기존 앱 위에 업데이트할 수 없으니** 키 파일을 안전한 곳에 따로 보관하세요. 키는 저장소에 올리지 않아요.
+
+## 보안
+
+- 비밀번호는 bcrypt로 저장하고, 가입 시 8자 이상이어야 해요.
+- 로그인은 계정마다 15분에 10번까지 틀릴 수 있고, 같은 주소에서 가입은 1시간에 5번까지예요.
+- 요청은 5MB까지, 기록은 계정당 30,000개까지 받아요.
+- 웹 앱은 콘텐츠 보안 정책(CSP)으로 이 사이트의 코드만 실행해요.
+- 사진·영상은 서버에 올라가지 않고 각자 폰에만 저장돼요.
+- 서명 키(keystore)와 비밀번호는 저장소에 올리지 말고 GitHub Secrets에만 넣으세요.

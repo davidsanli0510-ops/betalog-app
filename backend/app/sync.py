@@ -14,6 +14,8 @@ from .models import Attempt, Problem
 from .schemas import AttemptDto, ProblemDto, SyncRequest, SyncResponse
 
 MAX_BATCH = 2000
+# rows one account may keep (problems + attempts); stops one login from filling the free database
+MAX_ROWS_PER_USER = 30000
 RESULTS = {"FLASH", "SEND", "PROJECT"}
 
 
@@ -86,11 +88,24 @@ def sync(db: Session, seq: Sequence, user_id: int, req: SyncRequest) -> SyncResp
     for d in req.attempts:
         _check_attempt(d)
 
+    room = [None]  # how many new rows this account may still add, counted on first need
+
+    def take_room() -> bool:
+        if room[0] is None:
+            used = (db.scalar(select(func.count()).select_from(Problem).where(Problem.user_id == user_id)) or 0) + \
+                   (db.scalar(select(func.count()).select_from(Attempt).where(Attempt.user_id == user_id)) or 0)
+            room[0] = MAX_ROWS_PER_USER - used
+        if room[0] <= 0:
+            raise BadRequest("저장할 수 있는 기록 수를 넘었어요.", 413)
+        room[0] -= 1
+        return True
+
     for d in req.problems:
         e = db.get(Problem, d.id)
         if e is not None and (e.user_id != user_id or d.updatedAt < e.updated_at):
             continue  # someone else's row, or the server already has a newer edit
         if e is None:
+            take_room()
             e = Problem(id=d.id, user_id=user_id)
             db.add(e)
         e.gym = d.gym
@@ -114,6 +129,7 @@ def sync(db: Session, seq: Sequence, user_id: int, req: SyncRequest) -> SyncResp
         if parent is not None and parent.user_id != user_id:
             continue
         if e is None:
+            take_room()
             e = Attempt(id=d.id, user_id=user_id)
             db.add(e)
         e.problem_id = d.problemId

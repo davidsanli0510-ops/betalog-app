@@ -137,3 +137,68 @@ def test_data_survives_restart(tmp_path):
     pid2 = str(uuid.uuid4())
     r2 = sync(c2, token, cur, [problem(pid2, memo="new")])
     assert [p["id"] for p in r2["problems"]] == [pid2] and r2["cursor"] > cur
+
+
+# ---------- security ----------
+def test_password_needs_8_chars(client):
+    r = client.post("/api/auth/signup", json={"username": name(), "password": "short12"})
+    assert r.status_code == 400 and "8자" in r.json()["message"]
+
+
+def test_login_brute_force_is_slowed(client):
+    n = name()
+    signup(client, n)
+    for _ in range(10):
+        assert client.post("/api/auth/login", json={"username": n, "password": "wrong-pass"}).status_code == 401
+    r = client.post("/api/auth/login", json={"username": n, "password": "secret123"})
+    assert r.status_code == 429  # locked for a while, even with the right password
+    # other accounts are not affected
+    m = name()
+    signup(client, m)
+    assert client.post("/api/auth/login", json={"username": m, "password": "secret123"}).status_code == 200
+
+
+def test_signups_per_address_are_limited(client):
+    codes = [client.post("/api/auth/signup", json={"username": name(), "password": "secret123"}).status_code for _ in range(6)]
+    assert codes[:5] == [201] * 5 and codes[5] == 429
+
+
+def test_invite_code(tmp_path):
+    c = TestClient(create_app(database_url=db_url(tmp_path), jwt_secret="t" * 40, data_dir=str(tmp_path), signup_code="climb2026"))
+    assert c.get("/api/health").json()["inviteRequired"] is True
+    body = {"username": name(), "password": "secret123"}
+    assert c.post("/api/auth/signup", json=body).status_code == 403
+    assert c.post("/api/auth/signup", json={**body, "inviteCode": "nope"}).status_code == 403
+    assert c.post("/api/auth/signup", json={**body, "inviteCode": "climb2026"}).status_code == 201
+
+
+def test_huge_body_is_rejected(client):
+    t = signup(client, name())
+    big = "x" * (6 * 1024 * 1024)
+    r = client.post("/api/sync", headers={"Authorization": f"Bearer {t}", "Content-Type": "application/json"},
+                    content=('{"since":0,"problems":[],"pad":"' + big + '"}').encode())
+    assert r.status_code == 413
+
+
+def test_forged_token_is_rejected(client):
+    import jwt as pyjwt
+    t = signup(client, name())
+    forged = pyjwt.encode({"sub": "1", "exp": 9999999999}, "guessed-secret-" + "y" * 32, algorithm="HS256")
+    none_alg = pyjwt.encode({"sub": "1", "exp": 9999999999}, None, algorithm="none")
+    for bad in (forged, none_alg, t[:-3] + "abc"):
+        assert client.get("/api/me", headers={"Authorization": f"Bearer {bad}"}).status_code == 401
+
+
+def test_security_headers(client):
+    r = client.get("/api/health")
+    assert r.headers["x-content-type-options"] == "nosniff" and r.headers["cache-control"] == "no-store"
+
+
+def test_rows_per_account_are_capped(client, monkeypatch):
+    from app import sync as syncmod
+    monkeypatch.setattr(syncmod, "MAX_ROWS_PER_USER", 2)
+    t = signup(client, name())
+    sync(client, t, 0, problems=[problem("cap-a"), problem("cap-b")])
+    sync(client, t, 0, problems=[problem("cap-a", memo="edit", updated=6000)])  # editing is still fine
+    r = client.post("/api/sync", headers={"Authorization": f"Bearer {t}"}, json={"since": 0, "problems": [problem("cap-c")], "attempts": []})
+    assert r.status_code == 413

@@ -16,6 +16,7 @@ export function AccountSheet({ nav }: { nav: Nav }) {
   const [username, setUsername] = useState(acc?.username || '');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [invite, setInvite] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [check, setCheck] = useState<'' | 'ok' | 'fail' | 'checking'>('');
@@ -29,11 +30,12 @@ export function AccountSheet({ nav }: { nav: Nav }) {
     setErr('');
     if (!server.trim()) { setErr('서버 주소를 입력해 주세요.'); return; }
     if (!/^[a-zA-Z0-9_.-]{3,30}$/.test(username)) { setErr('아이디는 영문·숫자·._- 로 3~30자예요.'); return; }
-    if (password.length < 6) { setErr('비밀번호는 6자 이상이에요.'); return; }
+    if (mode === 'signup' && password.length < 8) { setErr('비밀번호는 8자 이상이에요.'); return; }
+    if (!password) { setErr('비밀번호를 입력해 주세요.'); return; }
     setBusy(true);
     try {
       ls.set('lastServer', normalizeServer(server));
-      if (mode === 'signup') await signup(server, username, password, displayName.trim() || username);
+      if (mode === 'signup') await signup(server, username, password, displayName.trim() || username, invite.trim() || undefined);
       else await login(server, username, password);
       setPassword(''); toast(mode === 'signup' ? '가입했어요. 이 폰의 기록을 올리는 중이에요' : '로그인했어요');
     } catch (e) { setErr((e as ApiError).message || '실패했어요'); }
@@ -93,7 +95,9 @@ export function AccountSheet({ nav }: { nav: Nav }) {
               <input id="uid" autoCapitalize="off" autoCorrect="off" autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} /></div>
             {mode === 'signup' && <div className="field"><label className="lbl" htmlFor="dname" style={{ marginBottom: 0 }}>이름 <span className="opt">친구들에게 보일 이름</span></label>
               <input id="dname" value={displayName} onChange={e => setDisplayName(e.target.value)} /></div>}
-            <div className="field"><label className="lbl" htmlFor="pw" style={{ marginBottom: 0 }}>비밀번호 <span className="opt">6자 이상</span></label>
+            {mode === 'signup' && <div className="field"><label className="lbl" htmlFor="invite" style={{ marginBottom: 0 }}>초대 코드 <span className="opt">서버를 만든 사람이 정한 코드</span></label>
+              <input id="invite" autoCapitalize="off" autoCorrect="off" autoComplete="off" value={invite} onChange={e => setInvite(e.target.value)} /></div>}
+            <div className="field"><label className="lbl" htmlFor="pw" style={{ marginBottom: 0 }}>비밀번호 {mode === 'signup' && <span className="opt">8자 이상</span>}</label>
               <input id="pw" type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') submit(); }} /></div>
             {err && <div className="errbox">{err}</div>}
             <button className="btn primary" style={{ width: '100%' }} disabled={busy} onClick={submit}>{busy ? (slow ? '서버 깨우는 중… (최대 1분)' : '처리 중…') : mode === 'signup' ? '가입하고 동기화 시작' : '로그인'}</button>

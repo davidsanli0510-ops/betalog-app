@@ -20,3 +20,5 @@ services:
         generateValue: true
       - key: CORS_ORIGINS
         value: "*"
+      - key: SIGNUP_CODE        # invite code friends type when signing up; keeps strangers off this public server
+        sync: false

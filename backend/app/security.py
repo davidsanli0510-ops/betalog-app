@@ -14,6 +14,10 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8")[:72], bcrypt.gensalt()).decode("ascii")
 
 
+# a real bcrypt hash of a random password, checked when the account doesn't exist (equal timing)
+DUMMY_HASH = bcrypt.hashpw(secrets.token_bytes(16), bcrypt.gensalt()).decode("ascii")
+
+
 def check_password(password: str, hashed: str) -> bool:
     try:
         return bcrypt.checkpw(password.encode("utf-8")[:72], hashed.encode("ascii"))
