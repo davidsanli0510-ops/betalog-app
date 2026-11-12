@@ -214,6 +214,10 @@ nav.tabs svg{width:22px;height:22px}
 .recdot i{width:9px;height:9px;border-radius:50%;background:#ff4b3e;animation:blink 1.4s infinite}
 @keyframes blink{50%{opacity:.25}}
 .buf{position:absolute;left:10px;right:10px;bottom:10px;display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.55);border-radius:999px;padding:6px 10px;color:#fff;font:600 12px var(--mono);pointer-events:none}
+.zoombar{position:absolute;left:50%;bottom:48px;transform:translateX(-50%);display:flex;gap:6px;padding:4px;background:rgba(0,0,0,.45);border-radius:999px}
+.zoombar button{min-width:36px;height:36px;border:0;border-radius:50%;background:rgba(255,255,255,.12);color:#fff;font:700 12px var(--mono);cursor:pointer;padding:0 4px}
+.zoombar button[aria-pressed=true]{background:rgba(0,0,0,.6);color:#ffd60a;min-width:42px;height:42px;margin:-3px 0;font-size:13px}
+.zoombar button:disabled{opacity:.5}
 .buf .bar{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.2);overflow:hidden}
 .buf .bar i{display:block;height:100%;background:var(--accent);border-radius:3px;transition:width .25s linear}
 .flashfx{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .35s}

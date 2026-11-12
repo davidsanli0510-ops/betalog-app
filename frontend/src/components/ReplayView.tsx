@@ -9,6 +9,9 @@ import type { Nav } from '../App';
 let flashHook: (() => void) | null = null;
 /** 60 → "1분", 90 → "1분 30초", 45 → "45초" */
 export const fmtLen = (sec: number) => { const m = Math.floor(sec / 60), x = Math.round(sec % 60); return m ? `${m}분${x ? ` ${x}초` : ''}` : `${x}초`; };
+/** like a phone camera: the active step shows its ×, the others just the number */
+const zoomLabel = (z: number, on: boolean) => (z === 0.5 ? '.5' : String(z)) + (on ? '×' : '');
+
 export async function saveReplay(len?: number) {
   const r = await replay.save(len);
   if (!r.ok) { toast(r.message); return; }
@@ -117,6 +120,7 @@ export function ReplayView({ nav }: { nav: Nav }) {
             <div className="hud"><span className="recdot"><i />REC {hms((Date.now() - r.startedAt) / 1000)}</span></div>
             <div className="buf"><span>버퍼 {fmtLen(Math.floor(Math.min(r.buffered, MAX_LEN)))}</span><span className="bar"><i style={{ width: Math.min(100, (r.buffered / MAX_LEN) * 100) + '%' }} /></span><span>{fmtLen(MAX_LEN)}</span></div>
             <div className={'flashfx' + (fx ? ' go' : '')} />
+            {r.zoomOptions.length > 1 && <div className="zoombar" role="group" aria-label="배율">{r.zoomOptions.map(z => <button key={z} id={'rpZoom' + String(z).replace('.', '_')} aria-pressed={r.zoom === z} disabled={r.zoomBusy} onClick={() => replay.setZoom(z)}>{zoomLabel(z, r.zoom === z)}</button>)}</div>}
           </div>
           {r.mode === 'compat' && <p className="sub" style={{ margin: '8px 0 0', fontSize: 12 }}>이 브라우저는 영상을 정확히 자르지 못해서 길이를 고를 수 없고, 직전 1~2분이 저장돼요. 안드로이드는 크롬, 아이폰은 최신 iOS의 사파리에서 길이를 골라 정확히 저장할 수 있어요.</p>}
           {r.status === 'paused' && (
@@ -140,6 +144,7 @@ export function ReplayView({ nav }: { nav: Nav }) {
           <div className="block rp-ctrl">
             <div className="crow"><span>화질<small>낮을수록 배터리·발열이 덜해요</small></span>
               <div className="seg">{([480, 720, 1080] as const).map(n => <button key={n} aria-pressed={r.cfg.res === n} onClick={() => r.cfg.res !== n && setCfg({ res: n }, `${n}p로 바꾸고 버퍼를 새로 시작했어요`)}>{n}p</button>)}</div></div>
+            {r.zoomOptions.length <= 1 && <div className="crow" id="rpZoomNone"><span>배율<small>이 기기·브라우저는 배율 조절을 지원하지 않아요</small></span><span className="mono sub">1×</span></div>}
             <div className="crow"><span>소리 녹음</span>
               <div className="seg">{[true, false].map(a => <button key={String(a)} aria-pressed={r.cfg.audio === a} onClick={() => r.cfg.audio !== a && setCfg({ audio: a }, a ? '소리도 녹음해요' : '소리 없이 녹화해요')}>{a ? '켜기' : '끄기'}</button>)}</div></div>
             <div className="row">

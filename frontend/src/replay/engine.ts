@@ -18,14 +18,18 @@ export const LENGTHS = [60, 90, 120] as const;
 export const MAX_LEN = 120;
 /** compat mode can't cut: it keeps one recorder between COMPAT_LEN and 2·COMPAT_LEN seconds old */
 const COMPAT_LEN = 60;
-export interface ReplayCfg { len: number; res: 480 | 720 | 1080; audio: boolean; facing: 'environment' | 'user' }
+export interface ReplayCfg { len: number; res: 480 | 720 | 1080; audio: boolean; facing: 'environment' | 'user'; zoom?: number }
 export type ReplayStatus = 'off' | 'starting' | 'live' | 'paused';
 export type ReplayMode = 'exact' | 'compat';
-export interface ReplaySnap { status: ReplayStatus; error: string | null; saveError: string | null; mode: ReplayMode; single: boolean; silent: boolean; awake: boolean; startedAt: number; saving: boolean; buffered: number; streamId: number; cfg: ReplayCfg }
+export interface ReplaySnap { status: ReplayStatus; error: string | null; saveError: string | null; mode: ReplayMode; single: boolean; silent: boolean; awake: boolean; startedAt: number; saving: boolean; buffered: number; streamId: number; cfg: ReplayCfg; zoom: number; zoomOptions: number[]; zoomBusy: boolean }
 
 const MIME = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
   .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(t)) || '';
 const BPS = { 480: 1_200_000, 720: 2_500_000, 1080: 5_000_000 } as const;
+/** zoom steps offered like a phone camera app; only those the device can do are shown */
+const ZOOM_STEPS = [1, 2, 3, 5];
+const ULTRA_RE = /ultra ?wide|초광각|울트라|0\.5x/i;
+type ZoomCaps = { min: number; max: number } | null;
 
 /** where to turn the camera back on, for the browser actually in use */
 function deniedHelp(): string {
@@ -76,7 +80,11 @@ class ReplayEngine {
   private hiddenAt = 0;
   private snap: ReplaySnap;
   private L = new Set<() => void>();
-  private st = { status: 'off' as ReplayStatus, error: null as string | null, saveError: null as string | null, mode: 'exact' as ReplayMode, single: false, startedAt: 0, saving: false, streamId: 0 };
+  private st = { status: 'off' as ReplayStatus, error: null as string | null, saveError: null as string | null, mode: 'exact' as ReplayMode, single: false, startedAt: 0, saving: false, streamId: 0, zoom: 1, zoomOptions: [1] as number[], zoomBusy: false };
+  /** zoom range of the main camera track, and the ultra-wide lens (for 0.5×) if the browser shows it */
+  private zoomCaps: ZoomCaps = null;
+  private ultraId: string | null = null;
+  private useUltra = false;
 
   constructor() {
     this.snap = this.make();
@@ -95,6 +103,7 @@ class ReplayEngine {
 
   setCfg(patch: Partial<ReplayCfg>) {
     const restart = this.stream && (('res' in patch && patch.res !== this.cfg.res) || ('audio' in patch && patch.audio !== this.cfg.audio) || ('facing' in patch && patch.facing !== this.cfg.facing));
+    if ('facing' in patch && patch.facing !== this.cfg.facing) { patch = { ...patch, zoom: 1 }; this.useUltra = false; this.ultraId = null; }
     this.cfg = { ...this.cfg, ...patch }; ls.set('replayCfg', this.cfg); this.emit();
     if (restart) return this.restart();
     return Promise.resolve(true);
@@ -102,7 +111,12 @@ class ReplayEngine {
 
   private getStream(audio: boolean) {
     const h = this.cfg.res;
-    return navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: this.cfg.facing }, height: { ideal: h }, width: { ideal: Math.round((h * 16) / 9) }, frameRate: { ideal: 30, max: 30 } }, audio });
+    const video: MediaTrackConstraints & { zoom?: boolean } = { height: { ideal: h }, width: { ideal: Math.round((h * 16) / 9) }, frameRate: { ideal: 30, max: 30 } };
+    if (this.useUltra && this.ultraId) video.deviceId = { exact: this.ultraId };
+    else video.facingMode = { ideal: this.cfg.facing };
+    // Chrome only hands out zoom control when it is asked for up front
+    if ((navigator.mediaDevices.getSupportedConstraints?.() as Record<string, boolean> | undefined)?.zoom) video.zoom = true;
+    return navigator.mediaDevices.getUserMedia({ video, audio });
   }
   async start(): Promise<boolean> {
     if (this.stream) return true;
@@ -113,6 +127,8 @@ class ReplayEngine {
     try {
       try { this.stream = await this.getStream(this.cfg.audio); }
       catch (e) {
+        // the ultra-wide lens may have gone away: fall back to the normal camera once
+        if (this.useUltra) { this.useUltra = false; this.cfg = { ...this.cfg, zoom: 1 }; return this.start(); }
         // the camera may be allowed while only the microphone was refused: record without sound
         if (!this.cfg.audio) throw e;
         this.stream = await this.getStream(false);
@@ -128,12 +144,66 @@ class ReplayEngine {
     }
     this.stream.getVideoTracks()[0]?.addEventListener('ended', () => this.onStopped());
     this.st.streamId++; this.st.startedAt = this.st.startedAt || Date.now();
+    await this.detectZoom();
     if (this.exactOk === null) this.exactOk = await canEncode(this.cfg.res, BPS[this.cfg.res]).catch(() => false);
     this.st.mode = this.exactOk || typeof MediaRecorder === 'undefined' ? 'exact' : 'compat';
     this.begin();
     await keepScreenOn(true);
     this.emit();
     return true;
+  }
+  private get videoTrack() { return this.stream?.getVideoTracks()[0]; }
+  /** works out which zoom steps this device offers and applies the saved one */
+  private async detectZoom() {
+    const t = this.videoTrack;
+    if (!this.useUltra) {
+      const z = (t?.getCapabilities?.() as { zoom?: { min?: number; max?: number } } | undefined)?.zoom;
+      this.zoomCaps = z && typeof z.max === 'number' && z.max > (z.min ?? 1) ? { min: z.min ?? 1, max: z.max } : null;
+    }
+    if (this.cfg.facing === 'environment' && !this.ultraId) {
+      try {
+        const devs = await navigator.mediaDevices.enumerateDevices();
+        this.ultraId = devs.find(d => d.kind === 'videoinput' && d.deviceId && ULTRA_RE.test(d.label))?.deviceId || null;
+      } catch { this.ultraId = null; }
+    }
+    const caps = this.zoomCaps;
+    const opts = ZOOM_STEPS.filter(z => z === 1 || (caps && z >= caps.min && z <= caps.max));
+    // the main camera itself may already go wider than 1× (some phones report min 0.5)
+    if (this.ultraId || (caps && caps.min <= 0.5)) opts.unshift(0.5);
+    this.st.zoomOptions = opts;
+    if (this.useUltra) { this.st.zoom = 0.5; return; }
+    const want = this.cfg.zoom && opts.includes(this.cfg.zoom) && this.cfg.zoom !== 0.5 ? this.cfg.zoom : 1;
+    this.st.zoom = 1;
+    if (want !== 1 || (caps && caps.min <= 1 && caps.max >= 1)) await this.applyZoom(want);
+  }
+  private async applyZoom(z: number): Promise<boolean> {
+    const t = this.videoTrack;
+    if (!t || !this.zoomCaps) { this.st.zoom = 1; return z === 1; }
+    try {
+      await t.applyConstraints({ advanced: [{ zoom: z } as MediaTrackConstraintSet] });
+      this.st.zoom = z; return true;
+    } catch (e) { console.warn('zoom', e); return false; }
+  }
+  /** changes the zoom. Within one lens the recording keeps going; 0.5× on a separate ultra-wide lens restarts the camera */
+  async setZoom(z: number): Promise<boolean> {
+    if (!this.stream || this.st.zoomBusy || z === this.st.zoom || !this.st.zoomOptions.includes(z)) return false;
+    this.cfg = { ...this.cfg, zoom: z }; ls.set('replayCfg', this.cfg);
+    const caps = this.zoomCaps;
+    const sameLens = !this.useUltra && (z !== 0.5 || (caps !== null && caps.min <= 0.5));
+    if (sameLens) {
+      const ok = await this.applyZoom(z);
+      if (!ok) toast('이 배율로 바꾸지 못했어요');
+      this.emit(); return ok;
+    }
+    // switching between the ultra-wide and the main lens needs a new camera stream
+    this.st.zoomBusy = true; this.emit();
+    this.useUltra = z === 0.5;
+    try {
+      const had = this.st.status === 'live';
+      const ok = await this.restart();
+      if (ok && had) toast('렌즈를 바꿔서 버퍼를 새로 시작했어요');
+      return ok;
+    } finally { this.st.zoomBusy = false; this.emit(); }
   }
   private stopRecorders() {
     this.ring?.stop(); this.ring = null;
