@@ -10,7 +10,7 @@ import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 export interface RawSample { data: Uint8Array; ts: number; key: boolean; dur?: number }
 export interface MuxInput {
   /** paramSets: the latest H.264 SPS/PPS seen, for encoders that only send them once (they may be outside the window) */
-  video: { kind: 'avc' | 'vp9'; width: number; height: number; decoderConfig: VideoDecoderConfig; samples: RawSample[]; paramSets?: { sps: Uint8Array; pps: Uint8Array } };
+  video: { kind: 'avc' | 'vp9'; width: number; height: number; rotation?: 0 | 90 | 180 | 270; decoderConfig: VideoDecoderConfig; samples: RawSample[]; paramSets?: { sps: Uint8Array; pps: Uint8Array } };
   audio?: { kind: 'aac' | 'opus'; sampleRate: number; channels: number; decoderConfig?: AudioDecoderConfig; samples: RawSample[] };
 }
 
@@ -106,7 +106,7 @@ export function muxClip(input: MuxInput): Uint8Array {
   const target = new ArrayBufferTarget();
   const muxer = new Muxer({
     target,
-    video: { codec: v.kind, width: v.width, height: v.height },
+    video: { codec: v.kind, width: v.width, height: v.height, rotation: v.rotation || 0 },
     audio: aPrepared.length && a ? { codec: a.kind, numberOfChannels: a.channels, sampleRate: a.sampleRate } : undefined,
     fastStart: 'in-memory',
     firstTimestampBehavior: 'cross-track-offset',

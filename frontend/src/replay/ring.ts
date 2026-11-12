@@ -21,6 +21,11 @@ const CODECS: { codec: string; kind: 'avc' | 'vp9' }[] = [
 ];
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+type Rot = 0 | 90 | 180 | 270;
+/** clockwise rotation the frame wants on display (newer WebCodecs); 0 when the browser doesn't say */
+const frameRot = (f: VideoFrame): Rot => { const r = (((f as VideoFrame & { rotation?: number }).rotation || 0) % 360 + 360) % 360; return (r === 90 || r === 180 || r === 270 ? r : 0) as Rot; };
+/** the pixel size as stored (before any rotation) */
+const pixelSize = (f: VideoFrame) => ({ w: even(f.visibleRect?.width || f.displayWidth), h: even(f.visibleRect?.height || f.displayHeight) });
 
 export function exactSupported(): boolean {
   return typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined' && typeof EncodedVideoChunk !== 'undefined';
@@ -49,6 +54,8 @@ export class ExactRing {
   private aenc: AudioEncoder | null = null;
   private width = 0;
   private height = 0;
+  /** rotation written into the MP4 so players show it upright */
+  private rotation: Rot = 0;
   private vKind: 'avc' | 'vp9' = 'avc';
   private vCodec = '';
   private paramSets: { sps: Uint8Array; pps: Uint8Array } | undefined;
@@ -116,10 +123,25 @@ export class ExactRing {
     document.body.appendChild(vid);
     vid.play().catch(() => {});
     let alive = true;
+    let canvas: HTMLCanvasElement | null = null, ctx: CanvasRenderingContext2D | null = null;
     const grab = () => {
       if (!alive) return;
       if (vid.readyState >= 2 && vid.videoWidth) {
-        try { this.onFrame(new VideoFrame(vid, { timestamp: this.now() })); } catch { /* frame not ready */ }
+        try {
+          const ts = this.now();
+          let f = new VideoFrame(vid, { timestamp: ts });
+          // iPhone cameras deliver landscape pixels and rotate them for display. If the frame doesn't say so
+          // (no rotation) but its shape differs from what the <video> shows, redraw it upright through a canvas.
+          const vw = vid.videoWidth, vh = vid.videoHeight, px = pixelSize(f);
+          if (!frameRot(f) && (px.w > px.h) !== (vw > vh)) {
+            f.close();
+            if (!canvas) { canvas = document.createElement('canvas'); ctx = canvas.getContext('2d'); }
+            if (canvas.width !== vw || canvas.height !== vh) { canvas.width = vw; canvas.height = vh; }
+            ctx!.drawImage(vid, 0, 0, vw, vh);
+            f = new VideoFrame(canvas, { timestamp: ts });
+          }
+          this.onFrame(f);
+        } catch { /* frame not ready */ }
       }
     };
     const rvfc = (vid as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }).requestVideoFrameCallback;
@@ -134,10 +156,10 @@ export class ExactRing {
   }
 
   private onFrame(frame: VideoFrame) {
-    const w = even(frame.displayWidth), h = even(frame.displayHeight);
-    if (!this.venc || w !== this.width || h !== this.height) {
-      // first frame, or the phone was rotated: (re)start the encoder at the new size and drop older footage
-      if (!this.configuring) this.configuring = this.configure(w, h).finally(() => { this.configuring = null; });
+    const { w, h } = pixelSize(frame), rot = frameRot(frame);
+    if (!this.venc || w !== this.width || h !== this.height || rot !== this.rotation) {
+      // first frame, or the phone was turned: (re)start the encoder at the new size and drop older footage
+      if (!this.configuring) this.configuring = this.configure(w, h, rot).finally(() => { this.configuring = null; });
       frame.close(); return;
     }
     if (this.venc.state !== 'configured' || this.venc.encodeQueueSize > 4) { frame.close(); return; } // device busy: skip a frame
@@ -153,13 +175,13 @@ export class ExactRing {
     finally { f.close(); }
   }
 
-  private async configure(w: number, h: number) {
+  private async configure(w: number, h: number, rot: Rot) {
     const picked = await pickCodec(w, h, this.bitrate);
     if (!picked) { this.failed?.(new Error('no supported video encoder at ' + w + 'x' + h)); return; }
     const cfg = picked.cfg; this.vKind = picked.kind; this.vCodec = cfg.codec;
     try { if (this.venc && this.venc.state !== 'closed') this.venc.close(); } catch { /* ignore */ }
     this.v = []; this.vDecoder = undefined; this.paramSets = undefined; this.lastKey = -Infinity;
-    this.width = w; this.height = h;
+    this.width = w; this.height = h; this.rotation = rot;
     const enc = new VideoEncoder({
       output: (chunk, meta) => {
         if (meta?.decoderConfig) this.vDecoder = meta.decoderConfig;
@@ -252,7 +274,7 @@ export class ExactRing {
     const t0 = vids[0].ts;
     const copy = (c: EncodedVideoChunk | EncodedAudioChunk) => { const u = new Uint8Array(c.byteLength); c.copyTo(u); return u; };
     const video: MuxInput['video'] = {
-      kind: this.vKind, width: this.width, height: this.height,
+      kind: this.vKind, width: this.width, height: this.height, rotation: this.rotation,
       decoderConfig: this.vDecoder || { codec: this.vCodec }, paramSets: this.paramSets,
       samples: vids.map(c => ({ data: copy(c.chunk), ts: c.ts, key: c.key })),
     };
