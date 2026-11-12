@@ -14,6 +14,22 @@ import { TimerView } from './components/TimerView';
 import { RecMini, ReplayView } from './components/ReplayView';
 import { AttachSheet } from './components/AttachSheet';
 import { AccountSheet } from './components/AccountSheet';
+import { useInstallHint } from './install';
+
+/** iPhone Safari only: explains adding to the home screen so photos and videos are not wiped */
+function InstallHint() {
+  const { show, hide } = useInstallHint();
+  if (!show) return null;
+  return (
+    <div className="install" id="installHint" role="note">
+      <b>홈 화면에 추가해서 쓰세요</b>
+      <p>사파리에서 7일 넘게 안 열면 아이폰이 사진·영상·클립을 지울 수 있어요. 홈 화면에 추가한 앱은 지워지지 않고, 앱처럼 전체 화면으로 열려요.</p>
+      <ol><li>아래쪽 <b>공유 버튼</b>(네모에 위 화살표, 안 보이면 <b>···</b> 안에 있어요)을 누르고</li><li><b>홈 화면에 추가</b>를 누르세요.</li></ol>
+      <p className="sub">홈 화면 앱은 사파리와 저장 공간이 따로라서, 지금 사파리에 있는 기록은 옮겨지지 않아요.</p>
+      <button className="btn sm" onClick={hide}>2주 동안 숨기기</button>
+    </div>
+  );
+}
 
 type Tab = 'problems' | 'replay' | 'compare' | 'records' | 'timer';
 type Sheet = { kind: 'detail'; id: string } | { kind: 'form'; id?: string; videos?: Blob[] } | { kind: 'attach'; clipId: string } | { kind: 'account' } | null;
@@ -95,6 +111,7 @@ export default function App() {
             <SyncButton onClick={nav.openAccount} />
           </div>
         </header>
+        <InstallHint />
         <main id="view">
           {tab === 'problems' && <ProblemsView nav={nav} />}
           {tab === 'replay' && <ReplayView nav={nav} />}

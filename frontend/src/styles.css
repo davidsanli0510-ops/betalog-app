@@ -262,3 +262,9 @@ nav.tabs svg{width:22px;height:22px}
 
 .rec-on .fab{bottom:calc(132px + env(safe-area-inset-bottom,0px))}
 .rec-on .toast{bottom:calc(192px + env(safe-area-inset-bottom,0px))}
+
+.install{margin:12px 0 0;padding:12px 14px;border-radius:12px;background:color-mix(in srgb,var(--accent) 9%,var(--surface));border:1px solid color-mix(in srgb,var(--accent) 40%,var(--line));font-size:13px;line-height:1.5}
+.install p{margin:4px 0}
+.install ol{margin:6px 0;padding-left:20px}
+.install .sub{font-size:12px}
+.install .btn{margin-top:4px}
