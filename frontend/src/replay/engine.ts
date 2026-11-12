@@ -21,7 +21,7 @@ const COMPAT_LEN = 60;
 export interface ReplayCfg { len: number; res: 480 | 720 | 1080; audio: boolean; facing: 'environment' | 'user' }
 export type ReplayStatus = 'off' | 'starting' | 'live' | 'paused';
 export type ReplayMode = 'exact' | 'compat';
-export interface ReplaySnap { status: ReplayStatus; error: string | null; mode: ReplayMode; single: boolean; silent: boolean; awake: boolean; startedAt: number; saving: boolean; buffered: number; streamId: number; cfg: ReplayCfg }
+export interface ReplaySnap { status: ReplayStatus; error: string | null; saveError: string | null; mode: ReplayMode; single: boolean; silent: boolean; awake: boolean; startedAt: number; saving: boolean; buffered: number; streamId: number; cfg: ReplayCfg }
 
 const MIME = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
   .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(t)) || '';
@@ -76,7 +76,7 @@ class ReplayEngine {
   private hiddenAt = 0;
   private snap: ReplaySnap;
   private L = new Set<() => void>();
-  private st = { status: 'off' as ReplayStatus, error: null as string | null, mode: 'exact' as ReplayMode, single: false, startedAt: 0, saving: false, streamId: 0 };
+  private st = { status: 'off' as ReplayStatus, error: null as string | null, saveError: null as string | null, mode: 'exact' as ReplayMode, single: false, startedAt: 0, saving: false, streamId: 0 };
 
   constructor() {
     this.snap = this.make();
@@ -193,18 +193,25 @@ class ReplayEngine {
 
   /** saves the recent footage as a clip; returns its length in seconds or an error message */
   /** saves the last `len` seconds (default: the length picked last time) */
-  async save(len?: number): Promise<{ ok: true; len: number; stored: boolean } | { ok: false; message: string }> {
+  async save(len?: number): Promise<{ ok: true; len: number; stored: boolean; silent?: boolean } | { ok: false; message: string }> {
     if (this.st.saving || !this.stream) return { ok: false, message: '녹화 중이 아니에요' };
     if (len && len !== this.cfg.len) { this.cfg = { ...this.cfg, len }; ls.set('replayCfg', this.cfg); }
     if (this.ring) {
-      let out: { blob: Blob; len: number } | null = null;
-      try { out = this.ring.save(this.cfg.len); } catch (e) { console.warn(e); return { ok: false, message: '저장하지 못했어요. 다시 눌러 주세요' }; }
+      let out: { blob: Blob; len: number; dropped: boolean } | null = null;
+      try { out = this.ring.save(this.cfg.len); }
+      catch (e) {
+        console.warn(e);
+        const why = (e instanceof Error ? e.message : String(e)).slice(0, 160);
+        this.st.saveError = `${why} · ${navigator.userAgent.match(/(iPhone OS [\d_]+|Android [\d.]+|Chrome\/\d+|Version\/[\d.]+)/g)?.join(' ') || ''}`;
+        this.emit();
+        return { ok: false, message: '저장하지 못했어요. 아래 원인을 캡처해서 알려주세요' };
+      }
       if (!out || out.len < 1.5) return { ok: false, message: '아직 녹화된 분량이 없어요' };
-      this.st.saving = true; this.emit();
+      this.st.saving = true; this.st.saveError = null; this.emit();
       try {
         const len = Math.round(out.len);
         const stored = await Clips.add({ id: 'c' + Date.now(), date: Date.now(), len, type: 'video/mp4', size: out.blob.size }, out.blob);
-        return { ok: true, len, stored };
+        return { ok: true, len, stored, silent: out.dropped };
       } finally { this.st.saving = false; this.emit(); }
     }
     const o = this.byAge()[0];

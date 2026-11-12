@@ -13,7 +13,7 @@ export async function saveReplay(len?: number) {
   const r = await replay.save(len);
   if (!r.ok) { toast(r.message); return; }
   flashHook?.(); if (navigator.vibrate) navigator.vibrate(60);
-  toast(r.stored ? `직전 ${fmtLen(r.len)}를 저장했어요` : '저장 공간이 부족해 이 클립은 지금만 볼 수 있어요');
+  toast(!r.stored ? '저장 공간이 부족해 이 클립은 지금만 볼 수 있어요' : r.silent ? `직전 ${fmtLen(r.len)}를 소리 없이 저장했어요` : `직전 ${fmtLen(r.len)}를 저장했어요`);
 }
 const saveSub = (r: ReplaySnap) => r.saving ? '저장 중…' : r.buffered < 1.5 ? '녹화 준비 중' : `직전 ${fmtLen(Math.floor(r.buffered))} 저장`;
 /** label under each length button: how much a press would really save right now */
@@ -136,6 +136,7 @@ export function ReplayView({ nav }: { nav: Nav }) {
               <b>방금 거 저장</b><small>{r.status === 'paused' ? '카메라 멈춤' : saveSub(r)}</small></button>
           )}
 
+          {r.saveError && <div className="errbox" style={{ marginTop: 10 }}><b>저장 실패 원인</b> (캡처해서 보내주세요)<div className="mono" style={{ fontSize: 11, marginTop: 4, overflowWrap: 'anywhere' }}>{r.saveError}</div></div>}
           <div className="block rp-ctrl">
             <div className="crow"><span>화질<small>낮을수록 배터리·발열이 덜해요</small></span>
               <div className="seg">{([480, 720, 1080] as const).map(n => <button key={n} aria-pressed={r.cfg.res === n} onClick={() => r.cfg.res !== n && setCfg({ res: n }, `${n}p로 바꾸고 버퍼를 새로 시작했어요`)}>{n}p</button>)}</div></div>

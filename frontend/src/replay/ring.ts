@@ -1,4 +1,4 @@
-import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
+import { isAnnexB, muxClip, nalType, splitAnnexB, type MuxInput } from './mux';
 
 /**
  * Exact replay buffer built on WebCodecs.
@@ -9,7 +9,8 @@ import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
  * Audio is added when the browser can encode AAC; otherwise clips are silent.
  */
 interface VChunk { chunk: EncodedVideoChunk; ts: number; key: boolean }
-interface AChunk { chunk: EncodedAudioChunk; ts: number }
+/** ts: what the encoder says; rt: when it arrived on our clock (used when the encoder's times look wrong) */
+interface AChunk { chunk: EncodedAudioChunk; ts: number; rt: number }
 
 const KEY_EVERY_US = 1_000_000;
 const SLACK_S = 3;
@@ -49,6 +50,8 @@ export class ExactRing {
   private width = 0;
   private height = 0;
   private vKind: 'avc' | 'vp9' = 'avc';
+  private vCodec = '';
+  private paramSets: { sps: Uint8Array; pps: Uint8Array } | undefined;
   private aKind: 'aac' | 'opus' = 'aac';
   private t0 = 0;
   private lastKey = -Infinity;
@@ -153,13 +156,21 @@ export class ExactRing {
   private async configure(w: number, h: number) {
     const picked = await pickCodec(w, h, this.bitrate);
     if (!picked) { this.failed?.(new Error('no supported video encoder at ' + w + 'x' + h)); return; }
-    const cfg = picked.cfg; this.vKind = picked.kind;
+    const cfg = picked.cfg; this.vKind = picked.kind; this.vCodec = cfg.codec;
     try { if (this.venc && this.venc.state !== 'closed') this.venc.close(); } catch { /* ignore */ }
-    this.v = []; this.vDecoder = undefined; this.lastKey = -Infinity;
+    this.v = []; this.vDecoder = undefined; this.paramSets = undefined; this.lastKey = -Infinity;
     this.width = w; this.height = h;
     const enc = new VideoEncoder({
       output: (chunk, meta) => {
         if (meta?.decoderConfig) this.vDecoder = meta.decoderConfig;
+        if (this.vKind === 'avc' && chunk.type === 'key' && !this.vDecoder?.description) {
+          // Annex B encoders (some Safari versions): remember SPS/PPS, they may only come with the first frame
+          const u = new Uint8Array(chunk.byteLength); chunk.copyTo(u);
+          if (isAnnexB(u)) {
+            const nals = splitAnnexB(u), sps = nals.find(n => nalType(n) === 7), pps = nals.find(n => nalType(n) === 8);
+            if (sps && pps) this.paramSets = { sps: sps.slice(), pps: pps.slice() };
+          }
+        }
         this.v.push({ chunk, ts: chunk.timestamp, key: chunk.type === 'key' });
         this.trim();
       },
@@ -177,7 +188,7 @@ export class ExactRing {
     for (let i = 0; i < this.v.length; i++) { if (this.v[i].ts > cutoff) break; if (this.v[i].key) keep = i; }
     if (keep > 0) this.v.splice(0, keep);
     const vStart = this.v[0].ts - 500_000;
-    let ai = 0; while (ai < this.a.length && this.a[ai].ts < vStart) ai++;
+    let ai = 0; while (ai < this.a.length && this.a[ai].rt < vStart) ai++;
     if (ai) this.a.splice(0, ai);
   }
 
@@ -194,7 +205,7 @@ export class ExactRing {
     }
     if (!cfg) { await ctx.close(); return; }
     const enc = new AudioEncoder({
-      output: (chunk, meta) => { if (meta?.decoderConfig) this.aDecoder = meta.decoderConfig; this.a.push({ chunk, ts: chunk.timestamp }); },
+      output: (chunk, meta) => { if (meta?.decoderConfig) this.aDecoder = meta.decoderConfig; this.a.push({ chunk, ts: chunk.timestamp, rt: this.now() }); },
       error: () => { this.audio = false; },
     });
     enc.configure(cfg);
@@ -226,8 +237,12 @@ export class ExactRing {
   }
 
   /* ---------- save ---------- */
-  save(len: number): { blob: Blob; len: number } | null {
-    if (!this.vDecoder || !this.v.length) return null;
+  /**
+   * The last `len` seconds as an MP4. Throws with a readable reason when muxing fails;
+   * if it only fails because of the audio, retries without sound (dropped = true).
+   */
+  save(len: number): { blob: Blob; len: number; dropped: boolean } | null {
+    if (!this.v.length) return null;
     const last = this.v[this.v.length - 1].ts, cutoff = last - len * 1e6;
     let start = -1;
     for (let i = 0; i < this.v.length; i++) { if (this.v[i].key && this.v[i].ts <= cutoff) start = i; }
@@ -235,18 +250,26 @@ export class ExactRing {
     if (start < 0) return null;
     const vids = this.v.slice(start);
     const t0 = vids[0].ts;
-    const auds = this.audio && this.aDecoder ? this.a.filter(c => c.ts >= t0 && c.ts <= last) : [];
-    const target = new ArrayBufferTarget();
-    const muxer = new Muxer({
-      target,
-      video: { codec: this.vKind, width: this.width, height: this.height },
-      audio: auds.length ? { codec: this.aKind, numberOfChannels: 1, sampleRate: this.sampleRate } : undefined,
-      fastStart: 'in-memory',
-      firstTimestampBehavior: 'cross-track-offset', // both tracks share one clock, keep them in sync
-    });
-    vids.forEach((c, i) => muxer.addVideoChunk(c.chunk, i === 0 ? { decoderConfig: this.vDecoder } : undefined, c.ts - t0));
-    auds.forEach((c, i) => muxer.addAudioChunk(c.chunk, i === 0 ? { decoderConfig: this.aDecoder } : undefined, Math.max(0, c.ts - t0)));
-    muxer.finalize();
-    return { blob: new Blob([target.buffer], { type: 'video/mp4' }), len: (last - t0) / 1e6 };
+    const copy = (c: EncodedVideoChunk | EncodedAudioChunk) => { const u = new Uint8Array(c.byteLength); c.copyTo(u); return u; };
+    const video: MuxInput['video'] = {
+      kind: this.vKind, width: this.width, height: this.height,
+      decoderConfig: this.vDecoder || { codec: this.vCodec }, paramSets: this.paramSets,
+      samples: vids.map(c => ({ data: copy(c.chunk), ts: c.ts, key: c.key })),
+    };
+    const sel = this.audio ? this.a.filter(c => c.rt >= t0 && c.rt <= last + 500_000) : [];
+    const audio: MuxInput['audio'] = sel.length ? {
+      kind: this.aKind, sampleRate: this.sampleRate, channels: 1, decoderConfig: this.aDecoder,
+      // the first sample anchors the audio; trust the encoder's time only if it is close to when it arrived
+      samples: sel.map((c, i) => ({ data: copy(c.chunk), key: true, dur: c.chunk.duration ?? undefined,
+        ts: i === 0 ? (Math.abs(c.ts - c.rt) < 2e6 ? c.ts : c.rt - 100_000) : c.ts })),
+    } : undefined;
+    let bytes: Uint8Array, dropped = false;
+    try { bytes = muxClip({ video, audio }); }
+    catch (e) {
+      if (!audio) throw e;
+      console.warn('mux with audio failed, saving without sound', e);
+      bytes = muxClip({ video }); dropped = true;
+    }
+    return { blob: new Blob([bytes], { type: 'video/mp4' }), len: (last - t0) / 1e6, dropped };
   }
 }
