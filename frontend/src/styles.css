@@ -184,21 +184,10 @@ nav.tabs svg{width:22px;height:22px}
 /* header extras */
 .hdr-r{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0}
 .gymsel{margin-left:0}
-.syncbtn{border:1px solid var(--line);background:var(--surface);border-radius:999px;height:34px;padding:0 10px;display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);flex:none}
-.syncbtn i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
-.syncbtn.ok i{background:var(--good)}
-.syncbtn.wait i{background:var(--warn)}
-.syncbtn.err i{background:var(--bad)}
 
-/* account sheet */
+/* forms */
 .field{display:flex;flex-direction:column;gap:6px}
 .field input{width:100%;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:500 15px var(--body);padding:11px 12px}
-.seg2{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.seg2 button{border:0;background:var(--surface);padding:10px;font-weight:600;color:var(--muted)}
-.seg2 button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
-.kv dt{color:var(--muted)}
-.kv dd{margin:0;overflow-wrap:anywhere}
 .errbox{background:color-mix(in srgb,var(--bad) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--bad) 45%,var(--line));border-radius:10px;padding:10px 12px;font-size:13px}
 
 /* replay */

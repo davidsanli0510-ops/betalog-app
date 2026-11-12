@@ -15,7 +15,6 @@ export interface Problem {
   videos: VideoRef[];
   marks: Mark[];
   deleted?: boolean;
-  dirty?: boolean;
   sample?: boolean;
 }
 
@@ -27,11 +26,5 @@ export interface Attempt {
   date: number;
   updatedAt: number;
   deleted?: boolean;
-  dirty?: boolean;
   sample?: boolean;
 }
-
-export interface Account { server: string; token: string; username: string; displayName: string }
-
-export type SyncStatus = 'off' | 'idle' | 'syncing' | 'offline' | 'error' | 'relogin';
-export interface SyncState { cursor: number; lastSync: number | null; status: SyncStatus; message?: string }

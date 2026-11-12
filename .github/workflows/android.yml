@@ -39,9 +39,6 @@ jobs:
         run: |
           npm ci
           npm run build
-        env:
-          # repository variable (Settings → Secrets and variables → Actions → Variables): the Render server address
-          VITE_DEFAULT_SERVER: ${{ vars.DEFAULT_SERVER }}
 
       - name: Copy it into the Android project
         run: npx cap sync android

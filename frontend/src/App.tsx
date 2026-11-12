@@ -13,7 +13,6 @@ import { RecordsView } from './components/RecordsView';
 import { TimerView } from './components/TimerView';
 import { RecMini, ReplayView } from './components/ReplayView';
 import { AttachSheet } from './components/AttachSheet';
-import { AccountSheet } from './components/AccountSheet';
 import { useInstallHint } from './install';
 
 /** iPhone Safari only: explains adding to the home screen so photos and videos are not wiped */
@@ -32,12 +31,11 @@ function InstallHint() {
 }
 
 type Tab = 'problems' | 'replay' | 'compare' | 'records' | 'timer';
-type Sheet = { kind: 'detail'; id: string } | { kind: 'form'; id?: string; videos?: Blob[] } | { kind: 'attach'; clipId: string } | { kind: 'account' } | null;
+type Sheet = { kind: 'detail'; id: string } | { kind: 'form'; id?: string; videos?: Blob[] } | { kind: 'attach'; clipId: string } | null;
 export interface Nav {
   openDetail(id: string): void;
   openForm(id?: string, videos?: Blob[]): void;
   openAttach(clipId: string): void;
-  openAccount(): void;
   close(): void;
   goTab(t: Tab): void;
 }
@@ -50,19 +48,6 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'timer', label: '타이머', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2M9 2h6" /></svg> },
 ];
 
-function SyncButton({ onClick }: { onClick: () => void }) {
-  const s = useAppState();
-  const pending = s.account ? s.problems.filter(p => p.dirty && !p.sample).length + s.logs.filter(l => l.dirty && !l.sample).length : 0;
-  const st = s.sync.status;
-  const [cls, label] = !s.account ? ['', '로그인']
-    : st === 'syncing' ? ['wait', s.sync.message ? '깨우는 중' : '동기화 중']
-    : st === 'relogin' ? ['err', '다시 로그인']
-    : st === 'error' ? ['err', '동기화 오류']
-    : pending ? ['wait', `대기 ${pending}`]
-    : st === 'offline' ? ['', '오프라인'] : ['ok', '동기화됨'];
-  return <button className={'syncbtn ' + cls} onClick={onClick} aria-label={'계정 · 동기화: ' + label}><i />{label}</button>;
-}
-
 export default function App() {
   const s = useAppState();
   const [tab, setTabRaw] = useState<Tab>(() => ls.get<Tab>('tab', 'problems'));
@@ -74,7 +59,6 @@ export default function App() {
     openDetail: id => setSheet({ kind: 'detail', id }),
     openForm: (id, videos) => setSheet({ kind: 'form', id, videos }),
     openAttach: clipId => setSheet({ kind: 'attach', clipId }),
-    openAccount: () => setSheet({ kind: 'account' }),
     close: () => setSheet(null),
     goTab: t => { setSheet(null); setTab(t); },
   }), [setTab]);
@@ -108,7 +92,6 @@ export default function App() {
                   {GYMS.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                 </select></div>
             )}
-            <SyncButton onClick={nav.openAccount} />
           </div>
         </header>
         <InstallHint />
@@ -131,7 +114,6 @@ export default function App() {
         {sheet?.kind === 'detail' && <ProblemDetail key={sheet.id} id={sheet.id} nav={nav} />}
         {sheet?.kind === 'form' && <ProblemForm key={(sheet.id || 'new') + (sheet.videos?.length || 0)} id={sheet.id} presetVideos={sheet.videos} nav={nav} />}
         {sheet?.kind === 'attach' && <AttachSheet clipId={sheet.clipId} nav={nav} />}
-        {sheet?.kind === 'account' && <AccountSheet nav={nav} />}
       </div>
       <Toast />
     </>

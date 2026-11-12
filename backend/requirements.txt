@@ -1,7 +1,0 @@
-fastapi==0.162.5
-pydantic==2.14.3
-uvicorn[standard]==0.54.0
-SQLAlchemy==2.1.8
-psycopg[binary]==3.3.9
-PyJWT==2.15.1
-bcrypt==5.0.0

@@ -144,7 +144,7 @@ export function ProblemDetail({ id, nav }: { id: string; nav: Nav }) {
           <label className="ghostvid" htmlFor="vup"><span><I.plus s={26} w={2} /><br />영상 추가</span></label>
         </div>
         <input type="file" id="vup" accept="video/*" multiple onChange={e => { const f = Array.from(e.target.files || []); e.target.value = ''; if (f.length) addVideos(f); }} />
-        <p className="sub" style={{ margin: '10px 0 0' }}>사진과 영상은 이 기기에만 저장돼요. 기록과 베타 표시만 서버와 동기화돼요.</p>
+        <p className="sub" style={{ margin: '10px 0 0' }}>기록·사진·영상은 모두 이 폰에만 저장돼요.</p>
       </section>
 
       {pendingProb ? (

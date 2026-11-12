@@ -1,18 +1,16 @@
 import { useSyncExternalStore } from 'react';
-import type { Account, Attempt, Problem, Result, SyncState } from './types';
+import type { Attempt, Problem, Result } from './types';
 import { DAY, ls, rng, startOfToday, uid } from './util';
 import { GYMS, TOP, gymOf } from './grades';
 
 export interface State {
   problems: Problem[];
   logs: Attempt[];
-  account: Account | null;
-  sync: SyncState;
   lastGym: string;
   gymF: string;
 }
 
-/* ---------- example records (marked sample, never synced, removable) ---------- */
+/* ---------- example records (marked sample, removable) ---------- */
 function sampleData(): { problems: Problem[]; logs: Attempt[] } {
   const r = rng(42), problems: Problem[] = [], logs: Attempt[] = [], gyms = ['yj', 'yj', 'gn', 'nh', 'is'];
   const memos = ['', '', '발 바꾸는 타이밍이 핵심', '마지막 슬로퍼에서 계속 미끄러짐', '', '힐훅 걸면 편함', ''];
@@ -36,10 +34,10 @@ function sampleData(): { problems: Problem[]; logs: Attempt[] } {
 
 function load(): State {
   const data = ls.get<{ problems: Problem[]; logs: Attempt[] } | null>('data', null) || sampleData();
+  // records live only on this phone; drop leftovers from the old login/sync version
+  ls.del('account'); ls.del('sync');
   return {
-    problems: data.problems, logs: data.logs,
-    account: ls.get<Account | null>('account', null),
-    sync: ls.get<SyncState>('sync', { cursor: 0, lastSync: null, status: 'off' }),
+    problems: data.problems.filter(p => !p.deleted), logs: data.logs.filter(l => !l.deleted),
     lastGym: ls.get('lastGym', GYMS[0].id),
     gymF: ls.get('gymF', 'all'),
   };
@@ -47,25 +45,19 @@ function load(): State {
 
 let state: State = load();
 const listeners = new Set<() => void>();
-let changeHook: (() => void) | null = null;
 let persistOk = true;
 
 export const getState = () => state;
 export const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l); }; };
 export const useAppState = () => useSyncExternalStore(subscribe, getState);
 export const lastPersistOk = () => persistOk;
-/** sync module registers itself here so data changes trigger a background sync */
-export const setChangeHook = (fn: () => void) => { changeHook = fn; };
 
-export function setState(patch: Partial<State>, opts: { dataChanged?: boolean } = {}) {
+export function setState(patch: Partial<State>) {
   state = { ...state, ...patch };
   if ('problems' in patch || 'logs' in patch) persistOk = ls.set('data', { problems: state.problems, logs: state.logs });
-  if ('account' in patch) state.account ? ls.set('account', state.account) : ls.del('account');
-  if ('sync' in patch) ls.set('sync', state.sync);
   if ('lastGym' in patch) ls.set('lastGym', state.lastGym);
   if ('gymF' in patch) ls.set('gymF', state.gymF);
   listeners.forEach(l => l());
-  if (opts.dataChanged && changeHook) changeHook();
 }
 
 /* ---------- selectors ---------- */
@@ -79,36 +71,30 @@ export function statusOf(s: State, pid: string): Status {
   return L.some(l => l.result === 'flash') ? 'flash' : L.some(l => l.result === 'send') ? 'send' : L.length ? 'project' : 'none';
 }
 
-/* ---------- actions (every change is stamped so sync can pick it up) ---------- */
-const stamp = <T extends { updatedAt: number; dirty?: boolean }>(o: T): T => ({ ...o, updatedAt: Date.now(), dirty: true });
+/* ---------- actions ---------- */
+const stamp = <T extends { updatedAt: number }>(o: T): T => ({ ...o, updatedAt: Date.now() });
 
 export function addProblem(p: Omit<Problem, 'id' | 'created' | 'updatedAt'>): Problem {
   const np = stamp({ ...p, id: uid(), created: Date.now(), updatedAt: 0 });
-  setState({ problems: [np, ...state.problems] }, { dataChanged: true });
+  setState({ problems: [np, ...state.problems] });
   return np;
 }
 export function updateProblem(id: string, patch: Partial<Problem>) {
-  setState({ problems: state.problems.map(p => (p.id === id ? stamp({ ...p, ...patch }) : p)) }, { dataChanged: true });
+  setState({ problems: state.problems.map(p => (p.id === id ? stamp({ ...p, ...patch }) : p)) });
 }
-/** local-only change (media ids, marks are synced but photos/videos are not) */
+/** change that doesn't count as an edit (e.g. attaching media) */
 export function updateProblemQuiet(id: string, patch: Partial<Problem>) {
   setState({ problems: state.problems.map(p => (p.id === id ? { ...p, ...patch } : p)) });
 }
 export function deleteProblem(id: string) {
-  const keepTomb = !!state.account; // only keep tombstones when there is a server to tell
-  const p = state.problems.find(x => x.id === id);
-  const problems = keepTomb && p && !p.sample ? state.problems.map(x => (x.id === id ? stamp({ ...x, deleted: true }) : x)) : state.problems.filter(x => x.id !== id);
-  const logs = keepTomb && p && !p.sample ? state.logs.map(l => (l.pid === id && !l.deleted ? stamp({ ...l, deleted: true }) : l)) : state.logs.filter(l => l.pid !== id);
-  setState({ problems, logs }, { dataChanged: true });
+  setState({ problems: state.problems.filter(x => x.id !== id), logs: state.logs.filter(l => l.pid !== id) });
 }
 export function addAttempt(pid: string, attempts: number, result: Result) {
   const a = stamp<Attempt>({ id: uid(), pid, attempts, result, date: Date.now(), updatedAt: 0 });
-  setState({ logs: [a, ...state.logs] }, { dataChanged: true });
+  setState({ logs: [a, ...state.logs] });
 }
 export function deleteAttempt(id: string) {
-  const l = state.logs.find(x => x.id === id);
-  const logs = state.account && l && !l.sample ? state.logs.map(x => (x.id === id ? stamp({ ...x, deleted: true }) : x)) : state.logs.filter(x => x.id !== id);
-  setState({ logs }, { dataChanged: true });
+  setState({ logs: state.logs.filter(x => x.id !== id) });
 }
 export function clearSamples() {
   setState({ problems: state.problems.filter(p => !p.sample), logs: state.logs.filter(l => !l.sample) });
