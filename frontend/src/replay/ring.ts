@@ -1,0 +1,252 @@
+import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
+
+/**
+ * Exact replay buffer built on WebCodecs.
+ *
+ * Camera frames are encoded to H.264 with a key frame every second and kept in memory for the last `len` seconds
+ * (plus a little slack). Saving takes the chunks from the key frame at "now − len" up to now and wraps them in an MP4,
+ * so a clip is the last `len` seconds (to within one second) at the moment the button is pressed. No re-encoding.
+ * Audio is added when the browser can encode AAC; otherwise clips are silent.
+ */
+interface VChunk { chunk: EncodedVideoChunk; ts: number; key: boolean }
+interface AChunk { chunk: EncodedAudioChunk; ts: number }
+
+const KEY_EVERY_US = 1_000_000;
+const SLACK_S = 3;
+// H.264 first (plays everywhere, incl. iPhone); VP9 for browsers without an H.264 encoder (e.g. Chromium on Linux)
+const CODECS: { codec: string; kind: 'avc' | 'vp9' }[] = [
+  ...['avc1.640028', 'avc1.4d0028', 'avc1.42e028', 'avc1.42001f'].map(codec => ({ codec, kind: 'avc' as const })),
+  { codec: 'vp09.00.40.08', kind: 'vp9' }, { codec: 'vp09.00.31.08', kind: 'vp9' },
+];
+
+const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+
+export function exactSupported(): boolean {
+  return typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined' && typeof EncodedVideoChunk !== 'undefined';
+}
+
+async function pickCodec(width: number, height: number, bitrate: number): Promise<{ cfg: VideoEncoderConfig; kind: 'avc' | 'vp9' } | null> {
+  for (const { codec, kind } of CODECS) {
+    const cfg: VideoEncoderConfig = { codec, width, height, bitrate, framerate: 30, latencyMode: 'realtime', ...(kind === 'avc' ? { avc: { format: 'avc' as const } } : {}) };
+    try { const r = await VideoEncoder.isConfigSupported(cfg); if (r.supported) return { cfg, kind }; } catch { /* try next */ }
+  }
+  return null;
+}
+
+/** true when this browser can H.264-encode at roughly this size — checked before choosing the exact mode */
+export async function canEncode(height: number, bitrate: number): Promise<boolean> {
+  if (!exactSupported()) return false;
+  return !!(await pickCodec(even((height * 16) / 9), even(height), bitrate));
+}
+
+export class ExactRing {
+  private v: VChunk[] = [];
+  private a: AChunk[] = [];
+  private vDecoder: VideoDecoderConfig | undefined;
+  private aDecoder: AudioDecoderConfig | undefined;
+  private venc: VideoEncoder | null = null;
+  private aenc: AudioEncoder | null = null;
+  private width = 0;
+  private height = 0;
+  private vKind: 'avc' | 'vp9' = 'avc';
+  private aKind: 'aac' | 'opus' = 'aac';
+  private t0 = 0;
+  private lastKey = -Infinity;
+  private configuring: Promise<void> | null = null;
+  private stops: (() => void)[] = [];
+  private failed: ((e: unknown) => void) | null = null;
+  audio = false;
+  sampleRate = 48000;
+
+  constructor(private stream: MediaStream, private len: () => number, private bitrate: number, onFail: (e: unknown) => void) {
+    this.failed = onFail;
+  }
+
+  /** seconds of footage a save would return right now */
+  buffered(): number {
+    const k = this.v.find(c => c.key);
+    if (!k || !this.v.length) return 0;
+    return Math.min(this.len(), (this.v[this.v.length - 1].ts - k.ts) / 1e6);
+  }
+
+  async start(withAudio: boolean) {
+    this.t0 = performance.now();
+    this.startVideo();
+    if (withAudio && this.stream.getAudioTracks().length) await this.startAudio().catch(() => { this.audio = false; });
+  }
+
+  stop() {
+    this.stops.forEach(f => { try { f(); } catch { /* ignore */ } });
+    this.stops = [];
+    try { if (this.venc && this.venc.state !== 'closed') this.venc.close(); } catch { /* ignore */ }
+    try { if (this.aenc && this.aenc.state !== 'closed') this.aenc.close(); } catch { /* ignore */ }
+    this.venc = null; this.aenc = null; this.v = []; this.a = [];
+    this.failed = null;
+  }
+
+  private now() { return Math.round((performance.now() - this.t0) * 1000); }
+
+  /* ---------- video ---------- */
+  private startVideo() {
+    const track = this.stream.getVideoTracks()[0];
+    const W = window as unknown as { MediaStreamTrackProcessor?: new (o: { track: MediaStreamTrack }) => { readable: ReadableStream<VideoFrame> } };
+    if (W.MediaStreamTrackProcessor) {
+      // Chrome / Android: frames straight from the camera track
+      const reader = new W.MediaStreamTrackProcessor({ track }).readable.getReader();
+      let alive = true;
+      this.stops.push(() => { alive = false; reader.cancel().catch(() => {}); });
+      (async () => {
+        while (alive) {
+          const { value, done } = await reader.read().catch(() => ({ value: undefined, done: true }));
+          if (done || !value) break;
+          this.onFrame(value);
+        }
+      })();
+      return;
+    }
+    // Safari: grab frames from a (practically invisible) playing <video>
+    const vid = document.createElement('video');
+    vid.muted = true; vid.playsInline = true; vid.autoplay = true;
+    vid.setAttribute('playsinline', '');
+    Object.assign(vid.style, { position: 'fixed', left: '0', bottom: '0', width: '2px', height: '2px', opacity: '0.01', pointerEvents: 'none', zIndex: '-1' });
+    vid.srcObject = this.stream;
+    document.body.appendChild(vid);
+    vid.play().catch(() => {});
+    let alive = true;
+    const grab = () => {
+      if (!alive) return;
+      if (vid.readyState >= 2 && vid.videoWidth) {
+        try { this.onFrame(new VideoFrame(vid, { timestamp: this.now() })); } catch { /* frame not ready */ }
+      }
+    };
+    const rvfc = (vid as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }).requestVideoFrameCallback;
+    if (rvfc) {
+      const loop = () => { grab(); if (alive) rvfc.call(vid, loop); };
+      rvfc.call(vid, loop);
+    } else {
+      const iv = setInterval(grab, 1000 / 30);
+      this.stops.push(() => clearInterval(iv));
+    }
+    this.stops.push(() => { alive = false; vid.srcObject = null; vid.remove(); });
+  }
+
+  private onFrame(frame: VideoFrame) {
+    const w = even(frame.displayWidth), h = even(frame.displayHeight);
+    if (!this.venc || w !== this.width || h !== this.height) {
+      // first frame, or the phone was rotated: (re)start the encoder at the new size and drop older footage
+      if (!this.configuring) this.configuring = this.configure(w, h).finally(() => { this.configuring = null; });
+      frame.close(); return;
+    }
+    if (this.venc.state !== 'configured' || this.venc.encodeQueueSize > 4) { frame.close(); return; } // device busy: skip a frame
+    const ts = this.now();
+    let f: VideoFrame = frame;
+    try {
+      f = new VideoFrame(frame, { timestamp: ts });
+      frame.close();
+      const key = ts - this.lastKey >= KEY_EVERY_US;
+      if (key) this.lastKey = ts;
+      this.venc.encode(f, { keyFrame: key });
+    } catch (e) { this.failed?.(e); }
+    finally { f.close(); }
+  }
+
+  private async configure(w: number, h: number) {
+    const picked = await pickCodec(w, h, this.bitrate);
+    if (!picked) { this.failed?.(new Error('no supported video encoder at ' + w + 'x' + h)); return; }
+    const cfg = picked.cfg; this.vKind = picked.kind;
+    try { if (this.venc && this.venc.state !== 'closed') this.venc.close(); } catch { /* ignore */ }
+    this.v = []; this.vDecoder = undefined; this.lastKey = -Infinity;
+    this.width = w; this.height = h;
+    const enc = new VideoEncoder({
+      output: (chunk, meta) => {
+        if (meta?.decoderConfig) this.vDecoder = meta.decoderConfig;
+        this.v.push({ chunk, ts: chunk.timestamp, key: chunk.type === 'key' });
+        this.trim();
+      },
+      error: e => this.failed?.(e),
+    });
+    enc.configure(cfg);
+    this.venc = enc;
+  }
+
+  /** keep the newest key frame that is at least len+slack seconds old, and everything after it */
+  private trim() {
+    if (!this.v.length) return;
+    const cutoff = this.v[this.v.length - 1].ts - (this.len() + SLACK_S) * 1e6;
+    let keep = 0;
+    for (let i = 0; i < this.v.length; i++) { if (this.v[i].ts > cutoff) break; if (this.v[i].key) keep = i; }
+    if (keep > 0) this.v.splice(0, keep);
+    const vStart = this.v[0].ts - 500_000;
+    let ai = 0; while (ai < this.a.length && this.a[ai].ts < vStart) ai++;
+    if (ai) this.a.splice(0, ai);
+  }
+
+  /* ---------- audio (AAC via AudioWorklet → AudioEncoder) ---------- */
+  private async startAudio() {
+    if (typeof AudioEncoder === 'undefined' || typeof AudioData === 'undefined') return;
+    const ctx = new AudioContext();
+    this.sampleRate = ctx.sampleRate;
+    // AAC plays everywhere; Opus only where AAC can't be encoded (not on iPhone, which has AAC)
+    let cfg: AudioEncoderConfig | null = null;
+    for (const [codec, kind] of [['mp4a.40.2', 'aac'], ['opus', 'opus']] as const) {
+      const c: AudioEncoderConfig = { codec, sampleRate: this.sampleRate, numberOfChannels: 1, bitrate: 96000 };
+      if (await AudioEncoder.isConfigSupported(c).then(r => !!r.supported, () => false)) { cfg = c; this.aKind = kind; break; }
+    }
+    if (!cfg) { await ctx.close(); return; }
+    const enc = new AudioEncoder({
+      output: (chunk, meta) => { if (meta?.decoderConfig) this.aDecoder = meta.decoderConfig; this.a.push({ chunk, ts: chunk.timestamp }); },
+      error: () => { this.audio = false; },
+    });
+    enc.configure(cfg);
+    this.aenc = enc;
+    const src = `class P extends AudioWorkletProcessor{constructor(){super();this.b=new Float32Array(2048);this.n=0}
+      process(i){const c=i[0]&&i[0][0];if(c){if(this.n+c.length>this.b.length){this.port.postMessage(this.b.slice(0,this.n));this.n=0}
+      this.b.set(c,this.n);this.n+=c.length}return true}}registerProcessor('betalog-tap',P)`;
+    const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+    await ctx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    const node = new AudioWorkletNode(ctx, 'betalog-tap');
+    const input = ctx.createMediaStreamSource(this.stream);
+    input.connect(node);
+    const mute = ctx.createGain(); mute.gain.value = 0; node.connect(mute); mute.connect(ctx.destination); // keep the graph pulling
+    let samples = 0, startUs = -1;
+    node.port.onmessage = (e: MessageEvent<Float32Array>) => {
+      if (!this.aenc || this.aenc.state !== 'configured') return;
+      if (startUs < 0) startUs = this.now() - Math.round((e.data.length / this.sampleRate) * 1e6);
+      const ts = startUs + Math.round((samples / this.sampleRate) * 1e6);
+      samples += e.data.length;
+      try {
+        const d = new AudioData({ format: 'f32-planar', sampleRate: this.sampleRate, numberOfFrames: e.data.length, numberOfChannels: 1, timestamp: ts, data: e.data });
+        this.aenc.encode(d); d.close();
+      } catch { /* drop */ }
+    };
+    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+    this.audio = true;
+    this.stops.push(() => { node.port.onmessage = null; input.disconnect(); node.disconnect(); ctx.close().catch(() => {}); });
+  }
+
+  /* ---------- save ---------- */
+  save(): { blob: Blob; len: number } | null {
+    if (!this.vDecoder || !this.v.length) return null;
+    const last = this.v[this.v.length - 1].ts, cutoff = last - this.len() * 1e6;
+    let start = -1;
+    for (let i = 0; i < this.v.length; i++) { if (this.v[i].key && this.v[i].ts <= cutoff) start = i; }
+    if (start < 0) start = this.v.findIndex(c => c.key);
+    if (start < 0) return null;
+    const vids = this.v.slice(start);
+    const t0 = vids[0].ts;
+    const auds = this.audio && this.aDecoder ? this.a.filter(c => c.ts >= t0 && c.ts <= last) : [];
+    const target = new ArrayBufferTarget();
+    const muxer = new Muxer({
+      target,
+      video: { codec: this.vKind, width: this.width, height: this.height },
+      audio: auds.length ? { codec: this.aKind, numberOfChannels: 1, sampleRate: this.sampleRate } : undefined,
+      fastStart: 'in-memory',
+      firstTimestampBehavior: 'cross-track-offset', // both tracks share one clock, keep them in sync
+    });
+    vids.forEach((c, i) => muxer.addVideoChunk(c.chunk, i === 0 ? { decoderConfig: this.vDecoder } : undefined, c.ts - t0));
+    auds.forEach((c, i) => muxer.addAudioChunk(c.chunk, i === 0 ? { decoderConfig: this.aDecoder } : undefined, Math.max(0, c.ts - t0)));
+    muxer.finalize();
+    return { blob: new Blob([target.buffer], { type: 'video/mp4' }), len: (last - t0) / 1e6 };
+  }
+}
