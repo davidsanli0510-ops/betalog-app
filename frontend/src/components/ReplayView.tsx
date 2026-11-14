@@ -48,17 +48,36 @@ export function RecMini({ show, onOpen }: { show: boolean; onOpen: () => void })
   );
 }
 
-function ClipCard({ id }: { id: string }) {
+function ClipCard({ id, playing, onPlay }: { id: string; playing: boolean; onPlay: (on: boolean) => void }) {
   const c = Clips.get(id)!;
   const [confirm, setConfirm] = useState(false);
+  const [src, setSrc] = useState(c.url);
+  const [failed, setFailed] = useState(false);
+  const tries = useRef(0);
+  // the stored copy didn't play: try from memory (and, for .mov, as mp4), else say so
+  const onError = async () => {
+    while (tries.current < 2) { const u = await Clips.fallbackUrl(id, tries.current++); if (u) { setSrc(u); return; } }
+    setFailed(true);
+  };
+  const thumb = (
+    <button className="cthumb" onClick={() => onPlay(true)} aria-label="클립 재생">
+      {c.thumbUrl ? <img src={c.thumbUrl} alt="" /> : <span className="noimg">{c.thumb === 'none' ? '미리보기 없음' : '미리보기 만드는 중…'}</span>}
+      <span className="play" aria-hidden="true">▶</span>
+      {c.len ? <span className="dur">{fmtLen(c.len)}</span> : null}
+    </button>
+  );
   if (confirm) return (
-    <div className="clip confirm"><video src={c.url + '#t=0.1'} playsInline preload="metadata" muted />
+    <div className="clip confirm">{c.thumbUrl ? <div className="cthumb"><img src={c.thumbUrl} alt="" /></div> : <div className="cthumb" />}
       <div className="meta"><b>이 클립을 지울까요?</b></div>
       <div className="acts"><button className="btn sm danger" onClick={() => { Clips.del(id); toast('클립을 지웠어요'); }}>삭제</button><button className="btn sm" onClick={() => setConfirm(false)}>취소</button></div></div>
   );
   return (
     <div className="clip">
-      <video src={c.url + '#t=0.1'} controls playsInline preload="metadata" />
+      {playing
+        ? (failed
+          ? <div className="cthumb"><span className="noimg">이 브라우저에서 재생하지 못했어요. 사진첩에 저장하면 볼 수 있어요.</span></div>
+          : <video key={src} src={src} controls autoPlay playsInline poster={c.thumbUrl} onError={onError} onEnded={() => onPlay(false)} />)
+        : thumb}
       <div className="meta"><b>{clock(c.date)}</b><span>{c.len ? fmtLen(c.len) + ' · ' : ''}{(c.size / 1048576).toFixed(1)}MB</span></div>
       <div className="acts">
         <button className="btn sm primary" onClick={async () => {
@@ -78,6 +97,7 @@ export function ReplayView() {
   const [dim, setDim] = useState(false);
   const [fx, setFx] = useState(false);
   const [clearArmed, setClearArmed] = useState(false);
+  const [playingId, setPlayingId] = useState<string | null>(null); // one clip plays at a time
   /** stop / restart throw the buffer away, so with something recorded they need a second tap */
   const [armed, setArmed] = useState<'' | 'stop' | 'restart'>('');
   useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(''), 4000); return () => clearTimeout(t); }, [armed]);
@@ -180,7 +200,7 @@ export function ReplayView() {
 
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '26px 0 10px' }}><h3 style={{ margin: 0, fontSize: 16 }}>저장한 클립</h3>{clips.length > 0 && <span className="mono sub">{clips.length}개</span>}</div>
       <div className="clips">
-        {clips.length ? clips.map(c => <ClipCard key={c.id} id={c.id} />)
+        {clips.length ? clips.map(c => <ClipCard key={c.id} id={c.id} playing={playingId === c.id} onPlay={on => setPlayingId(on ? c.id : null)} />)
           : <div className="empty span" style={{ marginTop: 0 }}><span>아직 저장한 클립이 없어요.<br />녹화 중에 '방금 거 저장'을 누르면 여기 쌓여요.</span></div>}
       </div>
       {clips.length > 0 && (
