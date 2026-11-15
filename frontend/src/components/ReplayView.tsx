@@ -201,7 +201,7 @@ export function ReplayView() {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '26px 0 10px' }}><h3 style={{ margin: 0, fontSize: 16 }}>저장한 클립</h3>{clips.length > 0 && <span className="mono sub">{clips.length}개</span>}</div>
       <div className="clips">
         {clips.length ? clips.map(c => <ClipCard key={c.id} id={c.id} playing={playingId === c.id} onPlay={on => setPlayingId(on ? c.id : null)} />)
-          : <div className="empty span" style={{ marginTop: 0 }}><span>아직 저장한 클립이 없어요.<br />녹화 중에 '방금 거 저장'을 누르면 여기 쌓여요.</span></div>}
+          : <div className="empty span" style={{ marginTop: 0 }}><span>아직 저장한 클립이 없어요.<br />녹화 중에 1분 · 1분 30초 · 2분을 누르면 여기 쌓여요.</span></div>}
       </div>
       {clips.length > 0 && (
         <div className="samplenote"><span>클립은 이 기기에만 보관돼요. 남길 클립은 {isApp ? '갤러리' : '사진첩'}에 저장하세요.</span>

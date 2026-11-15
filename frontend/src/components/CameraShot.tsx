@@ -7,25 +7,32 @@ import { cutLast, readMovie, type Movie } from '../replay/trim';
 import { fmtLen } from './ReplayView';
 
 /**
- * Records with the phone's own camera app (full camera quality: stabilisation, HDR, lenses), then keeps
- * the last 1 min / 1 min 30 / 2 min of it as a clip — cut without re-encoding (see replay/trim.ts).
+ * Takes a video from the phone's own camera app and keeps the last 1 min / 1 min 30 / 2 min of it as a clip,
+ * cut without re-encoding (see replay/trim.ts).
+ *
+ * iPhone Safari lowers the quality of videos it hands to web pages: recording through the page gives about
+ * 480×360, and picking from the photo library is scaled down to 720p. Only a file picked through "Files"
+ * arrives untouched, so that is the main path, with the quick in-page recording as a low-quality option.
  */
-const camName = isIOS ? '아이폰 카메라' : '폰 카메라';
+const camName = isIOS ? '아이폰' : '폰';
+const LOW = 720; // shorter side below this: the phone lowered the quality
 
 export function CameraShot() {
-  const input = useRef<HTMLInputElement>(null);
+  const input = useRef<HTMLInputElement>(null), pick = useRef<HTMLInputElement>(null);
+  const [guide, setGuide] = useState(false);
   const [movie, setMovie] = useState<Movie | null>(null);
   const [raw, setRaw] = useState<File | null>(null);
   const [busy, setBusy] = useState<'' | 'reading' | 'saving'>('');
   const [err, setErr] = useState('');
 
-  function open() {
-    if (replay.stream) { replay.stop(); toast('기본 카메라를 쓰려고 리플레이를 껐어요'); }
+  function open(el: HTMLInputElement | null, camera: boolean) {
+    if (camera && replay.stream) { replay.stop(); toast('기본 카메라를 쓰려고 리플레이를 껐어요'); }
     setErr(''); setMovie(null); setRaw(null);
-    input.current?.click();
+    el?.click();
   }
   async function picked(f: File | undefined) {
     if (input.current) input.current.value = '';
+    if (pick.current) pick.current.value = '';
     if (!f) return;
     setRaw(f); setBusy('reading'); setErr('');
     try { setMovie(await readMovie(f)); }
@@ -48,15 +55,29 @@ export function CameraShot() {
   }
 
   const dur = movie?.duration || 0;
+  const w = Math.round(movie?.video.width || 0), h = Math.round(movie?.video.height || 0);
+  const low = !!movie && w > 0 && Math.min(w, h) < LOW;
   return (
     <section className="block camshot">
-      <div className="camhead"><b>{camName}로 찍기</b><small>카메라 앱의 화질 그대로 찍고, 끝에서부터 원하는 길이만 남겨요. 리플레이처럼 계속 켜두는 방식은 아니에요.</small></div>
+      <div className="camhead"><b>{camName} 카메라 영상 자르기</b><small>기본 카메라 앱으로 찍은 영상에서 끝부분 1분 · 1분 30초 · 2분만 남겨요. 다시 압축하지 않아 화질이 그대로예요.</small></div>
+      <input ref={pick} id="camPick" type="file" accept="video/*,.mov,.mp4" hidden onChange={e => picked(e.target.files?.[0])} />
       <input ref={input} id="camInput" type="file" accept="video/*" capture="environment" hidden onChange={e => picked(e.target.files?.[0])} />
-      {!raw && <button className="btn" id="camOpen" style={{ width: '100%' }} onClick={open}>{camName} 열기</button>}
+      {!raw && <>
+        <button className="btn primary" id="camPickBtn" style={{ width: '100%' }} onClick={() => open(pick.current, false)}>원본 화질로 가져오기</button>
+        {isIOS && <button className="linkbtn" id="camGuide" aria-expanded={guide} onClick={() => setGuide(!guide)}>{guide ? '방법 접기' : '원본 화질로 가져오는 방법'}</button>}
+        {isIOS && guide && <ol className="camguide">
+          <li>아이폰 <b>카메라 앱</b>으로 평소처럼 찍어요.</li>
+          <li><b>사진 앱</b>에서 그 영상 → <b>공유</b> → <b>파일에 저장</b>을 눌러요.</li>
+          <li>여기서 <b>원본 화질로 가져오기</b> → <b>파일 선택</b>을 누르고 그 영상을 골라요.</li>
+          <li className="warn"><b>사진 보관함</b>에서 고르면 아이폰이 720p로 줄여서 넘겨줘요.</li>
+        </ol>}
+        <button className="btn" id="camOpen" style={{ width: '100%', marginTop: 8 }} onClick={() => open(input.current, true)}>바로 찍기 <small style={{ opacity: .7, fontWeight: 500 }}>· 화질 낮음</small></button>
+      </>}
       {busy === 'reading' && <p className="sub">영상을 읽는 중…</p>}
       {movie && busy !== 'reading' && (
         <div className="camcut">
-          <p className="sub" style={{ margin: '0 0 8px' }}>찍은 영상 <b className="mono">{fmtLen(Math.round(dur))}</b> · {(raw!.size / 1048576).toFixed(0)}MB. 남길 부분을 고르세요.</p>
+          <p className="sub" style={{ margin: '0 0 8px' }} id="camInfo">영상 <b className="mono">{fmtLen(Math.round(dur))}</b>{w ? <> · <span className="mono">{w}×{h}</span></> : null} · {(raw!.size / 1048576).toFixed(0)}MB. 남길 부분을 고르세요.</p>
+          {low && <div className="errbox" id="camLow" style={{ margin: '0 0 8px' }}>아이폰이 화질을 낮춰서 넘겨준 영상이에요({w}×{h}). 화질이 중요하면 취소하고 <b>원본 화질로 가져오기 → 파일 선택</b>으로 다시 골라 주세요.</div>}
           <div className="savegrid">
             {LENGTHS.map(n => <button key={n} className="bigsave" id={'camCut' + n} disabled={!!busy} onClick={() => keep(n)}>
               <b>{fmtLen(n)}</b><small>{n < dur - 0.5 ? '마지막 ' + fmtLen(n) : `영상이 ${fmtLen(Math.round(dur))}라 전부`}</small></button>)}
