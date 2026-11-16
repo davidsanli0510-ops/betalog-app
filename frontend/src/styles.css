@@ -200,3 +200,8 @@ nav.tabs svg{width:22px;height:22px}
 .camguide{margin:8px 0 4px;padding:10px 12px 10px 30px;background:var(--bg);border-radius:10px;font-size:13px;line-height:1.55}
 .camguide li+li{margin-top:3px}
 .camguide .warn{list-style:none;margin-left:-18px;color:var(--muted);font-size:12px}
+
+.station{margin-top:12px}
+.station .crow small{line-height:1.45}
+.station .crow+.crow{margin-top:14px}
+.exported{color:var(--accent);font-weight:600}

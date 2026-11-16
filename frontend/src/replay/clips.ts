@@ -5,6 +5,8 @@ export interface Clip {
   id: string; date: number; len: number; type: string; size: number; blob: Blob; url: string; memOnly?: boolean;
   /** still picture for the list (JPEG); 'none' when one could not be made */
   thumb?: Blob | 'none'; thumbUrl?: string;
+  /** when it was put in the phone's gallery (download / share) */
+  exported?: number;
 }
 
 let dbp: Promise<IDBDatabase | null> | null = null;
@@ -121,6 +123,15 @@ export const Clips = {
   },
   async clear() { for (const c of [...items]) await Clips.del(c.id); },
   get: (id: string) => items.find(x => x.id === id),
+  /** remembers that the clip went to the gallery */
+  async markExported(id: string) {
+    const c = items.find(x => x.id === id); if (!c) return;
+    const next = { ...c, exported: Date.now() };
+    items = items.map(x => (x.id === id ? next : x)); emit();
+    if (!c.memOnly) { try { await tx('readwrite', s => s.put(strip(next))); } catch { /* ignore */ } }
+  },
+  /** ids of clips already in the gallery beyond the newest `keep` (to clear from the app) */
+  oldExported: (keep: number) => items.slice(keep).filter(c => c.exported).map(c => c.id),
   /** a URL that plays when the stored one doesn't (made once, kept until the clip is deleted) */
   async fallbackUrl(id: string, attempt: number): Promise<string | null> {
     const c = items.find(x => x.id === id); if (!c) return null;

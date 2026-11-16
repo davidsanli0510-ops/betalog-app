@@ -3,6 +3,7 @@ import { LENGTHS, MAX_LEN, replay, useReplay, type ReplayCfg, type ReplaySnap, t
 import { Clips, clipName, useClips } from '../replay/clips';
 import { toast } from '../data/store';
 import { CameraShot } from './CameraShot';
+import { canAutoSave, KEEP_RECENT, station, useStation } from '../replay/station';
 import { clock, hms } from '../data/util';
 import { saveLabel, savedMessage, saveVideo } from '../native';
 import { galleryName } from '../platform';
@@ -18,7 +19,40 @@ export async function saveReplay(len?: number) {
   const r = await replay.save(len);
   if (!r.ok) { toast(r.message); return; }
   flashHook?.(); if (navigator.vibrate) navigator.vibrate(60);
+  const st = station.get();
+  if (st.autoSave && canAutoSave) {
+    // spare-phone mode: straight on to the gallery, where Google Photos backup can pick it up
+    const c = Clips.get(r.id);
+    if (c) {
+      const res = await saveVideo(c.blob, clipName(c));
+      if (res === 'downloaded' || res === 'shared') {
+        await Clips.markExported(c.id);
+        toast(`직전 ${fmtLen(r.len)}를 갤러리에 저장했어요`);
+        if (st.keepRecent) Clips.oldExported(KEEP_RECENT).forEach(id => Clips.del(id));
+        return;
+      }
+    }
+  }
   toast(!r.stored ? '저장 공간이 부족해 이 클립은 지금만 볼 수 있어요' : r.silent ? `직전 ${fmtLen(r.len)}를 소리 없이 저장했어요` : `직전 ${fmtLen(r.len)}를 저장했어요`);
+}
+
+/** settings for a phone left on a tripod all day as the replay camera */
+function StationSettings() {
+  const s = useStation();
+  const onOff = (v: boolean, set: (v: boolean) => void, id: string) => (
+    <div className="seg" id={id}>{[true, false].map(a => <button key={String(a)} aria-pressed={v === a} onClick={() => v !== a && set(a)}>{a ? '켜기' : '끄기'}</button>)}</div>
+  );
+  return (
+    <div className="block station" id="station">
+      <div className="camhead"><b>공기계 모드</b><small>남는 폰을 삼각대에 두고 하루 종일 녹화할 때 쓰는 설정이에요. 충전기를 꽂아 두세요.</small></div>
+      {canAutoSave && <div className="crow"><span>저장하면 바로 갤러리로<small>1분·2분 버튼 한 번에 갤러리 Download 앨범까지 저장돼요. 구글 포토 백업과 같이 쓰면 다른 폰에서 볼 수 있어요. 처음 한 번 크롬이 '여러 파일 다운로드'를 물으면 허용해 주세요.</small></span>
+        {onOff(s.autoSave, v => { station.set({ autoSave: v }); toast(v ? '저장할 때 갤러리에도 넣어요' : '앱에만 저장해요'); }, 'stAutoSave')}</div>}
+      {canAutoSave && s.autoSave && <div className="crow"><span>앱에는 최근 {KEEP_RECENT}개만<small>갤러리에 들어간 클립은 {KEEP_RECENT}개가 넘으면 앱에서 오래된 것부터 지워서 폰 공간을 아껴요.</small></span>
+        {onOff(s.keepRecent, v => station.set({ keepRecent: v }), 'stKeep')}</div>}
+      <div className="crow"><span>끊기면 자동으로 다시 켜기<small>전화나 다른 앱 때문에 카메라가 멈추면, 화면이 돌아왔을 때 알아서 녹화를 다시 시작해요.{replay.autoResumed ? ` (오늘 ${replay.autoResumed}번 다시 켰어요)` : ''}</small></span>
+        {onOff(s.autoResume, v => station.set({ autoResume: v }), 'stResume')}</div>
+    </div>
+  );
 }
 const saveSub = (r: ReplaySnap) => r.saving ? '저장 중…' : r.buffered < 1.5 ? '녹화 준비 중' : `직전 ${fmtLen(Math.floor(r.buffered))} 저장`;
 /** label under each length button: how much a press would really save right now */
@@ -79,10 +113,11 @@ function ClipCard({ id, playing, onPlay }: { id: string; playing: boolean; onPla
           ? <div className="cthumb"><span className="noimg">이 브라우저에서 재생하지 못했어요. 사진첩에 저장하면 볼 수 있어요.</span></div>
           : <video key={src} src={src} controls autoPlay playsInline poster={c.thumbUrl} onError={onError} onEnded={() => onPlay(false)} />)
         : thumb}
-      <div className="meta"><b>{clock(c.date)}</b><span>{c.len ? fmtLen(c.len) + ' · ' : ''}{(c.size / 1048576).toFixed(1)}MB</span></div>
+      <div className="meta"><b>{clock(c.date)}</b><span>{c.len ? fmtLen(c.len) + ' · ' : ''}{(c.size / 1048576).toFixed(1)}MB{c.exported ? <> · <span className="exported">{galleryName} 저장됨</span></> : null}</span></div>
       <div className="acts">
         <button className="btn sm primary" onClick={async () => {
           const r = await saveVideo(c.blob, clipName(c));
+          if (r === 'downloaded' || r === 'shared') Clips.markExported(c.id);
           toast(savedMessage(r));
         }}>{saveLabel}</button>
         <button className="btn sm" onClick={() => setConfirm(true)} aria-label="클립 삭제">삭제</button>
@@ -193,6 +228,7 @@ export function ReplayView() {
               <button className="btn" style={{ flex: '1 1 auto' }} onClick={() => setDim(true)}>화면 어둡게</button>
             </div>
           </div>
+          <StationSettings />
           <p className="sub" style={{ marginTop: 10, fontSize: 12 }}>블루투스 키보드·리모컨의 스페이스나 엔터 키로도 저장돼요. 마지막으로 고른 길이({fmtLen(r.cfg.len)})로 저장해요.</p>
         </div>
       )}

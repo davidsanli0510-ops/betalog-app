@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { Clips } from './clips';
 import { keepScreenOn, screenKeptOn } from '../native';
+import { station } from './station';
 import { toast } from '../data/store';
 import { ls } from '../data/util';
 import { ExactRing, canEncode, exactSupported } from './ring';
@@ -262,6 +263,7 @@ class ReplayEngine {
     this.emit();
   }
   stop() {
+    this.cancelResume();
     clearInterval(this.tick); this.stopRecorders();
     this.stream?.getTracks().forEach(t => t.stop()); this.stream = null;
     this.st = { ...this.st, status: 'off', startedAt: 0, saving: false };
@@ -270,10 +272,37 @@ class ReplayEngine {
   private onStopped() {
     clearInterval(this.tick); this.stopRecorders();
     this.st.status = 'paused'; this.emit();
+    this.scheduleResume(2000);
+  }
+
+  /* ---------- spare-phone mode: start again by itself when the camera was cut off ---------- */
+  private resumeTimer = 0;
+  private resumeTries = 0;
+  /** how many times recording was started again by itself (shown in the settings) */
+  autoResumed = 0;
+  private cancelResume() { clearTimeout(this.resumeTimer); this.resumeTimer = 0; }
+  private scheduleResume(ms: number) {
+    this.cancelResume();
+    if (!station.get().autoResume || this.st.status !== 'paused') return;
+    if (document.visibilityState !== 'visible') return; // tried again when the screen comes back
+    this.resumeTimer = window.setTimeout(async () => {
+      this.resumeTimer = 0;
+      if (!station.get().autoResume || this.st.status !== 'paused') return;
+      const keep = this.st.startedAt;
+      this.stopRecorders(); this.stream?.getTracks().forEach(t => t.stop()); this.stream = null;
+      this.st = { ...this.st, status: 'off' };
+      const ok = await this.start();
+      this.st.startedAt = keep || this.st.startedAt;
+      if (ok) { this.resumeTries = 0; this.autoResumed++; toast('카메라가 끊겨서 다시 켰어요'); this.emit(); return; }
+      // the camera is still busy: keep trying, a little less often each time (up to every 30 s)
+      this.st.status = 'paused'; this.emit();
+      this.scheduleResume(Math.min(30000, 3000 * ++this.resumeTries));
+    }, ms);
   }
   async restart(): Promise<boolean> { const keep = this.st.startedAt; this.stop(); this.st.startedAt = keep; return this.start(); }
   private onVisibility() {
     if (document.visibilityState === 'hidden') { this.hiddenAt = Date.now(); return; }
+    if (this.st.status === 'paused' && !this.resumeTimer) { this.scheduleResume(800); return; }
     if (!this.stream) return;
     const vt = this.stream.getVideoTracks()[0];
     if (!vt || vt.readyState === 'ended') { this.onStopped(); return; }
@@ -284,7 +313,7 @@ class ReplayEngine {
 
   /** saves the recent footage as a clip; returns its length in seconds or an error message */
   /** saves the last `len` seconds (default: the length picked last time) */
-  async save(len?: number): Promise<{ ok: true; len: number; stored: boolean; silent?: boolean } | { ok: false; message: string }> {
+  async save(len?: number): Promise<{ ok: true; id: string; len: number; stored: boolean; silent?: boolean } | { ok: false; message: string }> {
     if (this.st.saving || !this.stream) return { ok: false, message: '녹화 중이 아니에요' };
     if (len && len !== this.cfg.len) { this.cfg = { ...this.cfg, len }; ls.set('replayCfg', this.cfg); }
     if (this.ring) {
@@ -301,8 +330,9 @@ class ReplayEngine {
       this.st.saving = true; this.st.saveError = null; this.emit();
       try {
         const len = Math.round(out.len);
-        const stored = await Clips.add({ id: 'c' + Date.now(), date: Date.now(), len, type: 'video/mp4', size: out.blob.size }, out.blob);
-        return { ok: true, len, stored, silent: out.dropped };
+        const id = 'c' + Date.now();
+        const stored = await Clips.add({ id, date: Date.now(), len, type: 'video/mp4', size: out.blob.size }, out.blob);
+        return { ok: true, id, len, stored, silent: out.dropped };
       } finally { this.st.saving = false; this.emit(); }
     }
     const o = this.byAge()[0];
@@ -311,8 +341,9 @@ class ReplayEngine {
     try {
       const { blob, len } = await o.finish();
       try { if (this.stream) o.start(); } catch { /* ignore */ }
-      const stored = await Clips.add({ id: 'c' + Date.now(), date: Date.now(), len: Math.round(len), type: blob.type, size: blob.size }, blob);
-      return { ok: true, len: Math.round(len), stored };
+      const id = 'c' + Date.now();
+      const stored = await Clips.add({ id, date: Date.now(), len: Math.round(len), type: blob.type, size: blob.size }, blob);
+      return { ok: true, id, len: Math.round(len), stored };
     } catch {
       if (!o.rec && this.stream) try { o.start(); } catch { /* ignore */ }
       return { ok: false, message: '저장하지 못했어요. 다시 눌러 주세요' };
