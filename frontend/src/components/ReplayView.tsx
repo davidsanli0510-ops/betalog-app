@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { LENGTHS, MAX_LEN, replay, useReplay, type ReplayCfg, type ReplaySnap, type Res } from '../replay/engine';
 import { Clips, clipName, useClips } from '../replay/clips';
 import { toast } from '../data/store';
 import { CameraShot } from './CameraShot';
 import { canAutoSave, KEEP_RECENT, station, useStation } from '../replay/station';
-import { clock, hms } from '../data/util';
+import { clock, hms, ls } from '../data/util';
 import { saveLabel, savedMessage, saveVideo } from '../native';
 import { galleryName } from '../platform';
 
@@ -126,14 +126,33 @@ function ClipCard({ id, playing, onPlay }: { id: string; playing: boolean; onPla
   );
 }
 
+/** the saved clips. Kept apart so the once-a-second recording updates don't redraw it */
+const ClipSection = memo(function ClipSection() {
+  const clips = useClips();
+  const [playingId, setPlayingId] = useState<string | null>(null); // one clip plays at a time
+  const [clearArmed, setClearArmed] = useState(false);
+  useEffect(() => { if (!clearArmed) return; const t = setTimeout(() => setClearArmed(false), 4000); return () => clearTimeout(t); }, [clearArmed]);
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '26px 0 10px' }}><h3 style={{ margin: 0, fontSize: 16 }}>저장한 클립</h3>{clips.length > 0 && <span className="mono sub">{clips.length}개</span>}</div>
+      <div className="clips">
+        {clips.length ? clips.map(c => <ClipCard key={c.id} id={c.id} playing={playingId === c.id} onPlay={on => setPlayingId(on ? c.id : null)} />)
+          : <div className="empty span" style={{ marginTop: 0 }}><span>아직 저장한 클립이 없어요.<br />녹화 중에 1분 · 1분 30초 · 2분을 누르면 여기 쌓여요.</span></div>}
+      </div>
+      {clips.length > 0 && (
+        <div className="samplenote"><span>클립은 이 기기에만 보관돼요. 남길 클립은 {galleryName}에 저장하세요.</span>
+          <button className={'btn sm' + (clearArmed ? ' danger' : '')} onClick={() => { if (!clearArmed) { setClearArmed(true); return; } setClearArmed(false); Clips.clear(); toast('클립을 모두 지웠어요'); }}>
+            {clearArmed ? '한 번 더 누르면 모두 지워요' : '클립 모두 지우기'}</button></div>
+      )}
+    </>
+  );
+});
+
 export function ReplayView() {
   const r = useReplay();
-  const clips = useClips();
   const vid = useRef<HTMLVideoElement>(null);
   const [dim, setDim] = useState(false);
   const [fx, setFx] = useState(false);
-  const [clearArmed, setClearArmed] = useState(false);
-  const [playingId, setPlayingId] = useState<string | null>(null); // one clip plays at a time
   /** stop / restart throw the buffer away, so with something recorded they need a second tap */
   const [armed, setArmed] = useState<'' | 'stop' | 'restart'>('');
   useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(''), 4000); return () => clearTimeout(t); }, [armed]);
@@ -156,7 +175,6 @@ export function ReplayView() {
     v.srcObject = replay.stream; if (replay.stream) v.play().catch(() => {});
   }, [r.streamId, r.status]);
   useEffect(() => { if (replay.resumedNote) { replay.resumedNote = false; toast('화면을 벗어난 동안은 녹화되지 않아 버퍼를 새로 시작했어요'); } });
-  useEffect(() => { if (!clearArmed) return; const t = setTimeout(() => setClearArmed(false), 4000); return () => clearTimeout(t); }, [clearArmed]);
   const setCfg = async (p: Partial<ReplayCfg>, msg: string) => { const ok = await replay.setCfg(p); if (ok) toast(msg); };
   const on = r.status === 'live' || r.status === 'paused';
 
@@ -217,9 +235,11 @@ export function ReplayView() {
               <b>■ 종료</b><small>{armed === 'stop' ? '한 번 더 누르면 종료' : '카메라 끄기'}</small></button>
           </div>
           {armed && <p className="sub" style={{ margin: '6px 0 0', fontSize: 12 }}>저장하지 않은 장면은 사라져요.</p>}
+          {r.heavy && <div className="errbox" id="rpHeavy" style={{ marginTop: 10 }}>폰이 {resLabel(r.cfg.res)} 녹화를 버거워해서 영상이 끊길 수 있어요.
+            <div className="row" style={{ marginTop: 8 }}><button className="btn sm primary" onClick={() => { ls.set('resChosen', true); setCfg({ res: 720 }, '720p로 낮춰서 다시 시작했어요'); }}>720p로 낮추기</button></div></div>}
           <div className="block rp-ctrl">
-            <div className="crow"><span>화질<small id="rpRes">{r.cfg.res === 2160 ? '4K는 메모리를 많이 써서 폰에 따라 2분 저장이 실패할 수 있어요' : '높을수록 선명하지만 배터리·발열이 늘어요'}{r.actual && <> · 실제 {r.actual}</>}</small></span>
-              <div className="seg">{([720, 1080, ...(r.can4k || r.cfg.res === 2160 ? [2160] : [])] as Res[]).map(n => <button key={n} aria-pressed={r.cfg.res === n} onClick={() => r.cfg.res !== n && setCfg({ res: n }, `${resLabel(n)}로 바꾸고 버퍼를 새로 시작했어요`)}>{resLabel(n)}</button>)}</div></div>
+            <div className="crow"><span>화질<small id="rpRes">{r.cfg.res === 2160 ? '4K는 메모리를 많이 써서 폰에 따라 2분 저장이 실패할 수 있어요' : '높을수록 선명하지만 배터리·발열이 늘어요'}{r.actual && <> · 실제 {r.actual}</>}{r.encoder && <> · {r.encoder} {r.hw ? '하드웨어' : '소프트웨어(무거움)'}</>}</small></span>
+              <div className="seg">{([720, 1080, ...(r.can4k || r.cfg.res === 2160 ? [2160] : [])] as Res[]).map(n => <button key={n} aria-pressed={r.cfg.res === n} onClick={() => { ls.set('resChosen', true); if (r.cfg.res !== n) setCfg({ res: n }, `${resLabel(n)}로 바꾸고 버퍼를 새로 시작했어요`); }}>{resLabel(n)}</button>)}</div></div>
             {r.zoomOptions.length <= 1 && <div className="crow" id="rpZoomNone"><span>배율<small>이 기기·브라우저는 배율 조절을 지원하지 않아요</small></span><span className="mono sub">1×</span></div>}
             <div className="crow"><span>소리 녹음</span>
               <div className="seg">{[true, false].map(a => <button key={String(a)} aria-pressed={r.cfg.audio === a} onClick={() => r.cfg.audio !== a && setCfg({ audio: a }, a ? '소리도 녹음해요' : '소리 없이 녹화해요')}>{a ? '켜기' : '끄기'}</button>)}</div></div>
@@ -235,16 +255,7 @@ export function ReplayView() {
 
       <CameraShot />
 
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '26px 0 10px' }}><h3 style={{ margin: 0, fontSize: 16 }}>저장한 클립</h3>{clips.length > 0 && <span className="mono sub">{clips.length}개</span>}</div>
-      <div className="clips">
-        {clips.length ? clips.map(c => <ClipCard key={c.id} id={c.id} playing={playingId === c.id} onPlay={on => setPlayingId(on ? c.id : null)} />)
-          : <div className="empty span" style={{ marginTop: 0 }}><span>아직 저장한 클립이 없어요.<br />녹화 중에 1분 · 1분 30초 · 2분을 누르면 여기 쌓여요.</span></div>}
-      </div>
-      {clips.length > 0 && (
-        <div className="samplenote"><span>클립은 이 기기에만 보관돼요. 남길 클립은 {galleryName}에 저장하세요.</span>
-          <button className={'btn sm' + (clearArmed ? ' danger' : '')} onClick={() => { if (!clearArmed) { setClearArmed(true); return; } setClearArmed(false); Clips.clear(); toast('클립을 모두 지웠어요'); }}>
-            {clearArmed ? '한 번 더 누르면 모두 지워요' : '클립 모두 지우기'}</button></div>
-      )}
+      <ClipSection />
 
       {dim && (
         <div className="dim">

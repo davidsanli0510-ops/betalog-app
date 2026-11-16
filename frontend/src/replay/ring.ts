@@ -36,12 +36,28 @@ export function exactSupported(): boolean {
   return typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined' && typeof EncodedVideoChunk !== 'undefined';
 }
 
-async function pickCodec(width: number, height: number, bitrate: number): Promise<{ cfg: VideoEncoderConfig; kind: 'avc' | 'vp9' } | null> {
-  for (const { codec, kind } of codecsFor(width, height)) {
-    const cfg: VideoEncoderConfig = { codec, width, height, bitrate, framerate: 30, latencyMode: 'realtime', ...(kind === 'avc' ? { avc: { format: 'avc' as const } } : {}) };
-    try { const r = await VideoEncoder.isConfigSupported(cfg); if (r.supported) return { cfg, kind }; } catch { /* try next */ }
+/**
+ * Picks an encoder, asking for the phone's video chip first: encoding 1080p on the CPU is what makes
+ * a phone lag. `hw` says whether the chip is used (false = software, heavy on most phones).
+ */
+async function pickCodec(width: number, height: number, bitrate: number): Promise<{ cfg: VideoEncoderConfig; kind: 'avc' | 'vp9'; hw: boolean } | null> {
+  for (const hw of [true, false]) {
+    for (const { codec, kind } of codecsFor(width, height)) {
+      const cfg: VideoEncoderConfig = {
+        codec, width, height, bitrate, framerate: 30, latencyMode: 'realtime',
+        ...(hw ? { hardwareAcceleration: 'prefer-hardware' as const } : {}),
+        ...(kind === 'avc' ? { avc: { format: 'avc' as const } } : {}),
+      };
+      try { const r = await VideoEncoder.isConfigSupported(cfg); if (r.supported) return { cfg, kind, hw }; } catch { /* try next */ }
+    }
   }
   return null;
+}
+/** what encoder this phone would use at this height: codec family and whether the video chip does it */
+export async function probeEncoder(height: number, bitrate: number): Promise<{ kind: 'avc' | 'vp9'; hw: boolean } | null> {
+  if (!exactSupported()) return null;
+  const p = await pickCodec(even((height * 16) / 9), even(height), bitrate).catch(() => null);
+  return p && { kind: p.kind, hw: p.hw };
 }
 
 /** true when this browser can H.264-encode at roughly this size — checked before choosing the exact mode */
@@ -78,6 +94,15 @@ export class ExactRing {
   }
 
   /** seconds of footage a save would return right now */
+  /** frames that arrived and frames skipped because the encoder couldn't keep up (for the lag warning) */
+  seen = 0; dropped = 0;
+  /** share of frames skipped since the last call (0..1), or null when too few frames came in */
+  dropRate(): number | null {
+    const s = this.seen, d = this.dropped; this.seen = 0; this.dropped = 0;
+    return s >= 10 ? d / s : null;
+  }
+  hw: boolean | null = null;
+  vKindName() { return this.vKind === 'avc' ? 'H.264' : 'VP9'; }
   buffered(): number {
     const k = this.v.find(c => c.key);
     if (!k || !this.v.length) return 0;
@@ -167,7 +192,8 @@ export class ExactRing {
       if (!this.configuring) this.configuring = this.configure(w, h, rot).finally(() => { this.configuring = null; });
       frame.close(); return;
     }
-    if (this.venc.state !== 'configured' || this.venc.encodeQueueSize > 4) { frame.close(); return; } // device busy: skip a frame
+    this.seen++;
+    if (this.venc.state !== 'configured' || this.venc.encodeQueueSize > 4) { this.dropped++; frame.close(); return; } // device busy: skip a frame
     const ts = this.now();
     let f: VideoFrame = frame;
     try {
@@ -183,7 +209,7 @@ export class ExactRing {
   private async configure(w: number, h: number, rot: Rot) {
     const picked = await pickCodec(w, h, this.bitrate);
     if (!picked) { this.failed?.(new Error('no supported video encoder at ' + w + 'x' + h)); return; }
-    const cfg = picked.cfg; this.vKind = picked.kind; this.vCodec = cfg.codec;
+    const cfg = picked.cfg; this.vKind = picked.kind; this.vCodec = cfg.codec; this.hw = picked.hw;
     try { if (this.venc && this.venc.state !== 'closed') this.venc.close(); } catch { /* ignore */ }
     this.v = []; this.vDecoder = undefined; this.paramSets = undefined; this.lastKey = -Infinity;
     this.width = w; this.height = h; this.rotation = rot;

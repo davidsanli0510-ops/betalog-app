@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import { toast } from '../data/store';
 import { isIOS } from '../platform';
 import { Clips } from '../replay/clips';
@@ -18,7 +18,7 @@ import { fmtLen } from './ReplayView';
 const camName = isIOS ? '아이폰' : '폰';
 const LOW = 720; // shorter side below this: the phone lowered the quality
 
-export function CameraShot() {
+export const CameraShot = memo(function CameraShot() {
   const input = useRef<HTMLInputElement>(null), pick = useRef<HTMLInputElement>(null);
   const [guide, setGuide] = useState(false);
   const [movie, setMovie] = useState<Movie | null>(null);
@@ -100,4 +100,4 @@ export function CameraShot() {
       )}
     </section>
   );
-}
+});

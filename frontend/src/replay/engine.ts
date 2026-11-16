@@ -4,7 +4,7 @@ import { keepScreenOn, screenKeptOn } from '../native';
 import { station } from './station';
 import { toast } from '../data/store';
 import { ls } from '../data/util';
-import { ExactRing, canEncode, exactSupported } from './ring';
+import { ExactRing, canEncode, exactSupported, probeEncoder } from './ring';
 
 /**
  * Replay buffer: the camera keeps recording, and "save" keeps exactly the last `len` seconds before the press.
@@ -23,7 +23,11 @@ export interface ReplayCfg { len: number; res: Res; audio: boolean; facing: 'env
 export type Res = 480 | 720 | 1080 | 2160;
 export type ReplayStatus = 'off' | 'starting' | 'live' | 'paused';
 export type ReplayMode = 'exact' | 'compat';
-export interface ReplaySnap { status: ReplayStatus; error: string | null; saveError: string | null; mode: ReplayMode; single: boolean; silent: boolean; awake: boolean; startedAt: number; saving: boolean; buffered: number; streamId: number; cfg: ReplayCfg; zoom: number; zoomOptions: number[]; zoomBusy: boolean; can4k: boolean; actual: string }
+export interface ReplaySnap { status: ReplayStatus; error: string | null; saveError: string | null; mode: ReplayMode; single: boolean; silent: boolean; awake: boolean; startedAt: number; saving: boolean; buffered: number; streamId: number; cfg: ReplayCfg; zoom: number; zoomOptions: number[]; zoomBusy: boolean; can4k: boolean; actual: string;
+  /** encoder in use: 'H.264' / 'VP9', and whether the phone's video chip does it */
+  encoder: string; hw: boolean | null;
+  /** the phone can't keep up (many skipped frames) at this resolution */
+  heavy: boolean }
 
 const MIME = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
   .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(t)) || '';
@@ -87,7 +91,8 @@ class ReplayEngine {
   private hiddenAt = 0;
   private snap: ReplaySnap;
   private L = new Set<() => void>();
-  private st = { status: 'off' as ReplayStatus, error: null as string | null, saveError: null as string | null, mode: 'exact' as ReplayMode, single: false, startedAt: 0, saving: false, streamId: 0, zoom: 1, zoomOptions: [1] as number[], zoomBusy: false, can4k: false, actual: '' };
+  private st = { status: 'off' as ReplayStatus, error: null as string | null, saveError: null as string | null, mode: 'exact' as ReplayMode, single: false, startedAt: 0, saving: false, streamId: 0, zoom: 1, zoomOptions: [1] as number[], zoomBusy: false, can4k: false, actual: '', encoder: '', hw: null as boolean | null, heavy: false };
+  private heavyFor = 0;
   /** zoom range of the main camera track, and the ultra-wide lens (for 0.5×) if the browser shows it */
   private zoomCaps: ZoomCaps = null;
   private ultraId: string | null = null;
@@ -153,6 +158,14 @@ class ReplayEngine {
     this.st.streamId++; this.st.startedAt = this.st.startedAt || Date.now();
     await this.detectZoom();
     if (this.exactOk === null) this.exactOk = await canEncode(Math.min(this.cfg.res, 1080), BPS[1080]).catch(() => false);
+    // no video chip for 1080p: start at 720p unless 1080p was picked by hand
+    if (this.exactOk && this.cfg.res >= 1080 && !ls.get('resChosen', false)) {
+      const p = await probeEncoder(1080, BPS[1080]);
+      if (p && !p.hw) {
+        const p7 = await probeEncoder(720, BPS[720]);
+        if (p7) { this.cfg = { ...this.cfg, res: 720 }; ls.set('replayCfg', this.cfg); toast('이 폰은 1080p가 무거워서 720p로 녹화해요'); this.stream.getTracks().forEach(t => t.stop()); this.stream = null; return this.start(); }
+      }
+    }
     await this.detectRes();
     if (this.cfg.res === 2160 && !this.st.can4k) {
       // 4K was picked on another device/camera that had it: go back to 1080p
@@ -237,14 +250,14 @@ class ReplayEngine {
       this.ring = new ExactRing(this.stream!, () => MAX_LEN, BPS[this.cfg.res], e => this.onExactFail(e));
       this.ring.start(this.cfg.audio).then(() => this.emit());
       this.st.status = 'live';
-      clearInterval(this.tick); this.tick = setInterval(() => this.onTick(), 250);
+      clearInterval(this.tick); this.tick = setInterval(() => this.onTick(), 1000);
       return;
     }
     this.segs = [new Seg(this), new Seg(this)]; this.st.single = false;
     try { this.segs[0].start(); } catch (e) { this.st.error = `녹화를 시작하지 못했어요. (${(e as Error).name || e})`; this.stop(); return; }
     try { this.segs[1].start(); } catch { this.segs.pop(); this.st.single = true; }
     this.st.status = 'live';
-    clearInterval(this.tick); this.tick = setInterval(() => this.onTick(), 250);
+    clearInterval(this.tick); this.tick = setInterval(() => this.onTick(), 1000);
   }
   /** the exact encoder failed on this device: keep recording with the compatible method */
   private onExactFail(e: unknown) {
@@ -256,7 +269,17 @@ class ReplayEngine {
     this.begin(); this.emit();
   }
   private onTick() {
-    if (this.ring) { this.emit(); return; }
+    if (this.ring) {
+      // lag watch: if the phone skips many frames for a while, suggest a lower resolution
+      const r = this.ring.dropRate();
+      if (r !== null) {
+        this.heavyFor = r > 0.2 ? this.heavyFor + 1 : 0;
+        const heavy = this.heavyFor >= 8 && this.cfg.res > 720;
+        if (heavy !== this.st.heavy) this.st.heavy = heavy;
+      }
+      this.st.hw = this.ring.hw; this.st.encoder = this.ring.hw === null ? '' : this.ring.vKindName();
+      this.emit(); return;
+    }
     const live = this.byAge(), len = COMPAT_LEN;
     if (this.st.single) { const s = live[0]; if (s && s.age() >= len * 3) { s.discard(); s.start(); } }
     else if (live.length === 2 && live[1].age() >= len) { live[0].discard(); live[0].start(); }
