@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { Clips } from './clips';
-import { isApp, keepScreenOn, screenKeptOn } from '../native';
+import { keepScreenOn, screenKeptOn } from '../native';
 import { toast } from '../data/store';
 import { ls } from '../data/util';
 import { ExactRing, canEncode, exactSupported } from './ring';
@@ -38,13 +38,13 @@ type ZoomCaps = { min: number; max: number } | null;
 function deniedHelp(): string {
   const ua = navigator.userAgent;
   const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  if (isApp) return '카메라 권한이 꺼져 있어요. 폰 설정 → 애플리케이션 → 베타로그 → 권한에서 카메라와 마이크를 허용해 주세요.';
   if (ios) {
     const other = /CriOS/.test(ua) ? 'Chrome' : /FxiOS/.test(ua) ? 'Firefox' : /EdgiOS/.test(ua) ? 'Edge' : '';
     if (other) return `카메라가 막혀 있어요. 아이폰 설정 앱 → ${other} → 카메라와 마이크를 켠 뒤, 이 페이지를 새로고침하고 다시 눌러 주세요. 아이폰에서는 사파리로 여는 걸 추천해요.`;
     return '카메라가 막혀 있어요. 주소창 왼쪽 가가(aA) → 웹 사이트 설정 → 카메라와 마이크를 "허용"으로 바꾼 뒤 다시 눌러 주세요. 홈 화면에 추가한 앱이면 아이폰 설정 앱 → 앱 → Safari → 카메라도 확인해 주세요.';
   }
-  if (/Android/.test(ua)) return '카메라가 막혀 있어요. 주소창 왼쪽 아이콘 → 권한에서 카메라와 마이크를 허용한 뒤 다시 눌러 주세요.';
+  if (/SamsungBrowser/.test(ua)) return '카메라가 막혀 있어요. 주소창의 자물쇠 아이콘 → 권한(또는 메뉴 → 설정 → 사이트 및 다운로드 → 사이트 권한)에서 카메라와 마이크를 허용한 뒤 다시 눌러 주세요.';
+  if (/Android/.test(ua)) return '카메라가 막혀 있어요. 주소창 왼쪽 아이콘 → 권한에서 카메라와 마이크를 허용한 뒤 다시 눌러 주세요. 그래도 안 되면 폰 설정 → 애플리케이션 → Chrome → 권한을 확인해 주세요.';
   return '카메라가 막혀 있어요. 브라우저 주소창의 사이트 설정에서 카메라와 마이크를 허용한 뒤 다시 눌러 주세요.';
 }
 

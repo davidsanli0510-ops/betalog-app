@@ -1,21 +1,10 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
-
-/** Small Android plugin (android/app/src/main/java/.../BetaLogNativePlugin.java) */
-interface BetaLogNative {
-  keepScreenOn(o: { on: boolean }): Promise<void>;
-  saveStart(o: { name: string; mime: string }): Promise<{ id: string }>;
-  saveAppend(o: { id: string; data: string }): Promise<void>;
-  saveFinish(o: { id: string }): Promise<{ path: string }>;
-}
-export const isApp = Capacitor.isNativePlatform();
-const Native = registerPlugin<BetaLogNative>('BetaLogNative');
+import { isAndroid, isIOS } from './platform';
 
 /* ---------- keep the screen on while recording ---------- */
 let wake: WakeLockSentinel | null = null;
 let wantAwake = false;
 export async function keepScreenOn(on: boolean): Promise<boolean> {
   wantAwake = on;
-  if (isApp) { try { await Native.keepScreenOn({ on }); return on; } catch { return false; } }
   try {
     if (on) {
       if (!('wakeLock' in navigator)) return false;
@@ -26,36 +15,31 @@ export async function keepScreenOn(on: boolean): Promise<boolean> {
     await wake?.release(); wake = null; return false;
   } catch { return false; }
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wantAwake && !isApp && !wake) keepScreenOn(true); });
-export const screenKeptOn = () => (isApp ? wantAwake : !!wake);
+// the browser drops the lock when the page is hidden; take it again on return
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wantAwake && !wake) keepScreenOn(true); });
+export const screenKeptOn = () => !!wake;
 
-/* ---------- save a video to the phone's gallery ---------- */
-function b64(blob: Blob): Promise<string> {
-  return new Promise((res, rej) => {
-    const fr = new FileReader();
-    fr.onload = () => { const s = String(fr.result); res(s.slice(s.indexOf(',') + 1)); };
-    fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob);
-  });
+/* ---------- save a video to the phone's gallery ----------
+ * iPhone: the share sheet has "Save Video" (to Photos).
+ * Android: a download lands in Download, which Samsung Gallery and Google Photos show as an album;
+ * the Android share sheet has no "save to gallery", so it is only the fallback there. */
+export type SaveResult = 'shared' | 'downloaded' | 'cancelled' | 'failed';
+function download(blob: Blob, name: string) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
 }
-export type SaveResult = 'saved' | 'shared' | 'downloaded' | 'cancelled' | 'failed';
 export async function saveVideo(blob: Blob, name: string): Promise<SaveResult> {
   const mime = blob.type || 'video/mp4';
-  if (isApp) {
-    try {
-      const { id } = await Native.saveStart({ name, mime });
-      const CH = 512 * 1024;
-      for (let i = 0; i < blob.size; i += CH) await Native.saveAppend({ id, data: await b64(blob.slice(i, i + CH)) });
-      await Native.saveFinish({ id });
-      return 'saved';
-    } catch { return 'failed'; }
-  }
+  if (isAndroid) { try { download(blob, name); return 'downloaded'; } catch { /* try sharing */ } }
   const file = new File([blob], name, { type: mime });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file], title: '클라이밍 클립' }); return 'shared'; }
     catch (e) { if ((e as Error).name === 'AbortError') return 'cancelled'; }
   }
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
-  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 30000);
-  return 'downloaded';
+  try { download(blob, name); return 'downloaded'; } catch { return 'failed'; }
 }
-export const saveLabel = isApp ? '갤러리에 저장' : '사진첩에 저장';
+export const saveLabel = isIOS ? '사진첩에 저장' : '갤러리에 저장';
+export const savedMessage = (r: SaveResult) =>
+  r === 'downloaded' ? (isAndroid ? '저장했어요. 갤러리의 Download 앨범에서 볼 수 있어요' : '파일로 받았어요')
+  : r === 'shared' ? (isIOS ? "공유 메뉴에서 '비디오 저장'을 누르면 사진첩에 들어가요" : '공유 메뉴를 열었어요')
+  : r === 'failed' ? '저장하지 못했어요' : '취소했어요';

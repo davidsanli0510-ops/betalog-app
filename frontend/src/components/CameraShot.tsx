@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { toast } from '../data/store';
-import { isIOS } from '../install';
+import { isIOS } from '../platform';
 import { Clips } from '../replay/clips';
 import { replay, LENGTHS } from '../replay/engine';
 import { cutLast, readMovie, type Movie } from '../replay/trim';
@@ -12,7 +12,8 @@ import { fmtLen } from './ReplayView';
  *
  * iPhone Safari lowers the quality of videos it hands to web pages: recording through the page gives about
  * 480×360, and picking from the photo library is scaled down to 720p. Only a file picked through "Files"
- * arrives untouched, so that is the main path, with the quick in-page recording as a low-quality option.
+ * arrives untouched, so that is the main path there, with the quick in-page recording as a low-quality option.
+ * Android browsers hand over the camera app's original file, so there recording is the main button.
  */
 const camName = isIOS ? '아이폰' : '폰';
 const LOW = 720; // shorter side below this: the phone lowered the quality
@@ -63,7 +64,8 @@ export function CameraShot() {
       <input ref={pick} id="camPick" type="file" accept="video/*,.mov,.mp4" hidden onChange={e => picked(e.target.files?.[0])} />
       <input ref={input} id="camInput" type="file" accept="video/*" capture="environment" hidden onChange={e => picked(e.target.files?.[0])} />
       {!raw && <>
-        <button className="btn primary" id="camPickBtn" style={{ width: '100%' }} onClick={() => open(pick.current, false)}>원본 화질로 가져오기</button>
+        {!isIOS && <button className="btn primary" id="camOpen" style={{ width: '100%', marginBottom: 8 }} onClick={() => open(input.current, true)}>카메라로 찍기</button>}
+        <button className={'btn' + (isIOS ? ' primary' : '')} id="camPickBtn" style={{ width: '100%' }} onClick={() => open(pick.current, false)}>{isIOS ? '원본 화질로 가져오기' : '갤러리에서 가져오기'}</button>
         {isIOS && <button className="linkbtn" id="camGuide" aria-expanded={guide} onClick={() => setGuide(!guide)}>{guide ? '방법 접기' : '원본 화질로 가져오는 방법'}</button>}
         {isIOS && guide && <ol className="camguide">
           <li>아이폰 <b>카메라 앱</b>으로 평소처럼 찍어요.</li>
@@ -71,13 +73,15 @@ export function CameraShot() {
           <li>여기서 <b>원본 화질로 가져오기</b> → <b>파일 선택</b>을 누르고 그 영상을 골라요.</li>
           <li className="warn"><b>사진 보관함</b>에서 고르면 아이폰이 720p로 줄여서 넘겨줘요.</li>
         </ol>}
-        <button className="btn" id="camOpen" style={{ width: '100%', marginTop: 8 }} onClick={() => open(input.current, true)}>바로 찍기 <small style={{ opacity: .7, fontWeight: 500 }}>· 화질 낮음</small></button>
+        {isIOS && <button className="btn" id="camOpen" style={{ width: '100%', marginTop: 8 }} onClick={() => open(input.current, true)}>바로 찍기 <small style={{ opacity: .7, fontWeight: 500 }}>· 화질 낮음</small></button>}
       </>}
       {busy === 'reading' && <p className="sub">영상을 읽는 중…</p>}
       {movie && busy !== 'reading' && (
         <div className="camcut">
           <p className="sub" style={{ margin: '0 0 8px' }} id="camInfo">영상 <b className="mono">{fmtLen(Math.round(dur))}</b>{w ? <> · <span className="mono">{w}×{h}</span></> : null} · {(raw!.size / 1048576).toFixed(0)}MB. 남길 부분을 고르세요.</p>
-          {low && <div className="errbox" id="camLow" style={{ margin: '0 0 8px' }}>아이폰이 화질을 낮춰서 넘겨준 영상이에요({w}×{h}). 화질이 중요하면 취소하고 <b>원본 화질로 가져오기 → 파일 선택</b>으로 다시 골라 주세요.</div>}
+          {low && <div className="errbox" id="camLow" style={{ margin: '0 0 8px' }}>{isIOS
+            ? <>아이폰이 화질을 낮춰서 넘겨준 영상이에요({w}×{h}). 화질이 중요하면 취소하고 <b>원본 화질로 가져오기 → 파일 선택</b>으로 다시 골라 주세요.</>
+            : <>화질이 낮은 영상이에요({w}×{h}). 카메라 앱의 동영상 해상도 설정을 확인해 보세요.</>}</div>}
           <div className="savegrid">
             {LENGTHS.map(n => <button key={n} className="bigsave" id={'camCut' + n} disabled={!!busy} onClick={() => keep(n)}>
               <b>{fmtLen(n)}</b><small>{n < dur - 0.5 ? '마지막 ' + fmtLen(n) : `영상이 ${fmtLen(Math.round(dur))}라 전부`}</small></button>)}

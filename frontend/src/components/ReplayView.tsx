@@ -4,7 +4,8 @@ import { Clips, clipName, useClips } from '../replay/clips';
 import { toast } from '../data/store';
 import { CameraShot } from './CameraShot';
 import { clock, hms } from '../data/util';
-import { isApp, saveLabel, saveVideo } from '../native';
+import { saveLabel, savedMessage, saveVideo } from '../native';
+import { galleryName } from '../platform';
 
 let flashHook: (() => void) | null = null;
 /** 60 → "1분", 90 → "1분 30초", 45 → "45초" */
@@ -82,7 +83,7 @@ function ClipCard({ id, playing, onPlay }: { id: string; playing: boolean; onPla
       <div className="acts">
         <button className="btn sm primary" onClick={async () => {
           const r = await saveVideo(c.blob, clipName(c));
-          toast(r === 'saved' ? '갤러리의 BetaLog 폴더에 저장했어요' : r === 'downloaded' ? '파일로 받았어요' : r === 'failed' ? '저장하지 못했어요. 저장 권한을 확인해 주세요' : r === 'shared' ? '공유 메뉴를 열었어요' : '취소했어요');
+          toast(savedMessage(r));
         }}>{saveLabel}</button>
         <button className="btn sm" onClick={() => setConfirm(true)} aria-label="클립 삭제">삭제</button>
       </div>
@@ -134,12 +135,12 @@ export function ReplayView() {
           <ol className="rp-steps">
             <li><span className="k">1</span><div><b>폰을 거치대에 두고 카메라를 켜요</b><span>충전기를 꽂아 두면 오래 켜둘 수 있어요.</span></div></li>
             <li><span className="k">2</span><div><b>평소처럼 등반해요</b><span>저장 전까지는 아무것도 쌓이지 않아 용량 걱정이 없어요.</span></div></li>
-            <li><span className="k">3</span><div><b>1분 · 1분 30초 · 2분 중 골라 눌러요</b><span>누른 순간부터 거꾸로 그만큼이 클립이 되고, 바로 {isApp ? '갤러리' : '사진첩'}에 저장할 수 있어요.</span></div></li>
+            <li><span className="k">3</span><div><b>1분 · 1분 30초 · 2분 중 골라 눌러요</b><span>누른 순간부터 거꾸로 그만큼이 클립이 되고, 바로 {galleryName}에 저장할 수 있어요.</span></div></li>
           </ol>
           {r.error && <div className="errbox" style={{ marginBottom: 12 }}>{r.error}</div>}
           <button className="btn primary" style={{ width: '100%', fontSize: 17, padding: 16 }} disabled={r.status === 'starting'} onClick={() => replay.start()}>
             {r.status === 'starting' ? '카메라 여는 중…' : '카메라 켜기'}</button>
-          <p className="sub" style={{ marginTop: 10, fontSize: 12 }}>{isApp ? '앱이 화면에 떠 있는 동안 녹화돼요. 다른 앱으로 나가면 멈춰요.' : '아이폰은 이 화면이 떠 있어야 녹화돼요. 다른 앱으로 나가거나 화면을 끄면 멈춰요.'}</p>
+          <p className="sub" style={{ marginTop: 10, fontSize: 12 }}>이 화면이 떠 있어야 녹화돼요. 다른 앱으로 나가거나 화면을 끄면 멈춰요. 녹화 중에는 화면이 저절로 꺼지지 않게 해 둘게요.</p>
         </div>
       ) : (
         <div style={{ marginTop: 12 }}>
@@ -204,7 +205,7 @@ export function ReplayView() {
           : <div className="empty span" style={{ marginTop: 0 }}><span>아직 저장한 클립이 없어요.<br />녹화 중에 1분 · 1분 30초 · 2분을 누르면 여기 쌓여요.</span></div>}
       </div>
       {clips.length > 0 && (
-        <div className="samplenote"><span>클립은 이 기기에만 보관돼요. 남길 클립은 {isApp ? '갤러리' : '사진첩'}에 저장하세요.</span>
+        <div className="samplenote"><span>클립은 이 기기에만 보관돼요. 남길 클립은 {galleryName}에 저장하세요.</span>
           <button className={'btn sm' + (clearArmed ? ' danger' : '')} onClick={() => { if (!clearArmed) { setClearArmed(true); return; } setClearArmed(false); Clips.clear(); toast('클립을 모두 지웠어요'); }}>
             {clearArmed ? '한 번 더 누르면 모두 지워요' : '클립 모두 지우기'}</button></div>
       )}
