@@ -1,7 +1,9 @@
 import { memo, useRef, useState } from 'react';
 import { toast } from '../data/store';
 import { isIOS } from '../platform';
-import { Clips } from '../replay/clips';
+import { Clips, clipName } from '../replay/clips';
+import { saveClip } from '../native';
+import { canAutoSave, station } from '../replay/station';
 import { replay, LENGTHS } from '../replay/engine';
 import { cutLast, readMovie, type Movie } from '../replay/trim';
 import { fmtLen } from './ReplayView';
@@ -46,8 +48,16 @@ export const CameraShot = memo(function CameraShot() {
     try {
       const { blob, len } = movie ? cutLast(movie, sec) : { blob: raw as Blob, len: 0 };
       const type = blob.type || raw.type || 'video/mp4';
-      const stored = await Clips.add({ id: 'c' + Date.now(), date: Date.now(), len: Math.round(len), type, size: blob.size }, blob);
-      toast(stored ? `${len ? fmtLen(Math.round(len)) + ' ' : ''}클립으로 저장했어요` : '저장 공간이 부족해서 이 화면을 닫으면 사라져요. 사진첩에 저장해 두세요');
+      const id = 'c' + Date.now();
+      const stored = await Clips.add({ id, date: Date.now(), len: Math.round(len), type, size: blob.size }, blob);
+      const what = len ? `${sec === null ? '' : '마지막 '}${fmtLen(Math.round(len))}` : '영상';
+      const c = Clips.get(id);
+      // one press: also into the gallery (Galaxy: Download album), like replay clips
+      const res = c && station.get().autoSave && canAutoSave ? await saveClip(c, clipName(c)) : null;
+      if (c && (res === 'photos' || res === 'downloaded' || res === 'shared')) {
+        await Clips.markExported(id);
+        toast(`${what}을 갤러리에 저장했어요`);
+      } else toast(stored ? `${what}을 클립으로 저장했어요` : '저장 공간이 부족해서 이 화면을 닫으면 사라져요. 사진첩에 저장해 두세요');
       setMovie(null); setRaw(null); setErr('');
     } catch (e) {
       console.warn(e); setErr(`저장하지 못했어요. (${(e as Error).message || e})`);
@@ -73,6 +83,7 @@ export const CameraShot = memo(function CameraShot() {
           <li>여기서 <b>원본 화질로 가져오기</b> → <b>파일 선택</b>을 누르고 그 영상을 골라요.</li>
           <li className="warn"><b>사진 보관함</b>에서 고르면 아이폰이 720p로 줄여서 넘겨줘요.</li>
         </ol>}
+        {!isIOS && <p className="sub" id="camNote" style={{ fontSize: 12, margin: '8px 0 0', lineHeight: 1.5 }}>카메라 앱이 찍은 원본 전체도 갤러리에 남겨요. 잘라서 저장한 뒤 원본이 필요 없으면 갤러리에서 지워 주세요.</p>}
         {isIOS && <button className="btn" id="camOpen" style={{ width: '100%', marginTop: 8 }} onClick={() => open(input.current, true)}>바로 찍기 <small style={{ opacity: .7, fontWeight: 500 }}>· 화질 낮음</small></button>}
       </>}
       {busy === 'reading' && <p className="sub">영상을 읽는 중…</p>}

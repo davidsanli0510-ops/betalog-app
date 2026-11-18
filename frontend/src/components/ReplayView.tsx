@@ -45,8 +45,8 @@ function StationSettings() {
   );
   return (
     <div className="block station" id="station">
-      <div className="camhead"><b>공기계 모드</b><small>남는 폰을 삼각대에 두고 하루 종일 녹화할 때 쓰는 설정이에요. 충전기를 꽂아 두세요.</small></div>
-      {canAutoSave && <div className="crow"><span>저장하면 바로 갤러리로<small>1분·2분 버튼 한 번에 갤러리 Download 앨범까지 저장돼요. 구글 포토 백업과 같이 쓰면 다른 폰에서 볼 수 있어요. 처음 한 번 크롬이 '여러 파일 다운로드'를 물으면 허용해 주세요.</small></span>
+      <div className="camhead"><b>저장 · 공기계 모드</b><small>남는 폰을 삼각대에 두고 하루 종일 녹화할 때는 충전기를 꽂아 두세요.</small></div>
+      {canAutoSave && <div className="crow"><span>저장하면 바로 {galleryName}로<small>{isNativeIOS ? '1분·2분 버튼 한 번에 사진첩까지 저장돼요.' : <>1분·2분 버튼과 카메라 영상 자르기가 한 번에 갤러리 Download 앨범까지 저장돼요. 구글 포토 백업과 같이 쓰면 다른 폰에서 볼 수 있어요. 처음 한 번 크롬이 '여러 파일 다운로드'를 물으면 허용해 주세요.</>}</small></span>
         {onOff(s.autoSave, v => { station.set({ autoSave: v }); toast(v ? '저장할 때 갤러리에도 넣어요' : '앱에만 저장해요'); }, 'stAutoSave')}</div>}
       {canAutoSave && s.autoSave && <div className="crow"><span>앱에는 최근 {KEEP_RECENT}개만<small>갤러리에 들어간 클립은 {KEEP_RECENT}개가 넘으면 앱에서 오래된 것부터 지워서 폰 공간을 아껴요.</small></span>
         {onOff(s.keepRecent, v => station.set({ keepRecent: v }), 'stKeep')}</div>}

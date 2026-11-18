@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { ls } from '../data/util';
-import { isIOS } from '../platform';
+import { isAndroid, isIOS } from '../platform';
 import { isNativeIOS } from './nativeReplay';
 
 /**
@@ -16,6 +16,11 @@ export const canAutoSave = !isIOS || isNativeIOS; // the iPhone app adds to Phot
 export const KEEP_RECENT = 10;
 
 let st: Station = { autoSave: false, autoResume: false, keepRecent: false, ...ls.get<Partial<Station>>('station', {}) };
+// Galaxy and the iPhone app: clips go straight to the gallery unless that was turned off (set once, then the
+// person's own choice is kept)
+if (canAutoSave && (isAndroid || isNativeIOS) && !ls.get('autoSaveDefault1', false)) {
+  ls.set('autoSaveDefault1', true); st = { ...st, autoSave: true }; ls.set('station', st);
+}
 if (!canAutoSave) st = { ...st, autoSave: false, keepRecent: false };
 const subs = new Set<() => void>();
 export const station = {
