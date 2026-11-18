@@ -3,9 +3,10 @@ import { LENGTHS, MAX_LEN, replay, useReplay, type ReplayCfg, type ReplaySnap, t
 import { Clips, clipName, useClips } from '../replay/clips';
 import { toast } from '../data/store';
 import { CameraShot } from './CameraShot';
+import { followPreview, isNativeIOS } from '../replay/nativeReplay';
 import { canAutoSave, KEEP_RECENT, station, useStation } from '../replay/station';
 import { clock, hms, ls } from '../data/util';
-import { saveLabel, savedMessage, saveVideo } from '../native';
+import { saveClip, saveLabel, savedMessage } from '../native';
 import { galleryName } from '../platform';
 
 let flashHook: (() => void) | null = null;
@@ -24,8 +25,8 @@ export async function saveReplay(len?: number) {
     // spare-phone mode: straight on to the gallery, where Google Photos backup can pick it up
     const c = Clips.get(r.id);
     if (c) {
-      const res = await saveVideo(c.blob, clipName(c));
-      if (res === 'downloaded' || res === 'shared') {
+      const res = await saveClip(c, clipName(c));
+      if (res === 'photos' || res === 'downloaded' || res === 'shared') {
         await Clips.markExported(c.id);
         toast(`직전 ${fmtLen(r.len)}를 갤러리에 저장했어요`);
         if (st.keepRecent) Clips.oldExported(KEEP_RECENT).forEach(id => Clips.del(id));
@@ -61,7 +62,7 @@ const shortLen = (n: number) => (n === 90 ? '1분30' : fmtLen(n));
 
 /* keyboard / bluetooth remote: space or enter saves while recording */
 document.addEventListener('keydown', e => {
-  if (!replay.stream || e.repeat) return;
+  if (!replay.isOn || e.repeat) return;
   const tag = ((e.target as HTMLElement)?.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
   if (e.code === 'Space' || e.key === 'Enter' || e.key === 'MediaPlayPause') { e.preventDefault(); saveReplay(); } // last picked length
@@ -116,8 +117,8 @@ function ClipCard({ id, playing, onPlay }: { id: string; playing: boolean; onPla
       <div className="meta"><b>{clock(c.date)}</b><span>{c.len ? fmtLen(c.len) + ' · ' : ''}{(c.size / 1048576).toFixed(1)}MB{c.exported ? <> · <span className="exported">{galleryName} 저장됨</span></> : null}</span></div>
       <div className="acts">
         <button className="btn sm primary" onClick={async () => {
-          const r = await saveVideo(c.blob, clipName(c));
-          if (r === 'downloaded' || r === 'shared') Clips.markExported(c.id);
+          const r = await saveClip(c, clipName(c));
+          if (r === 'photos' || r === 'downloaded' || r === 'shared') Clips.markExported(c.id);
           toast(savedMessage(r));
         }}>{saveLabel}</button>
         <button className="btn sm" onClick={() => setConfirm(true)} aria-label="클립 삭제">삭제</button>
@@ -152,6 +153,14 @@ export function ReplayView() {
   const r = useReplay();
   const vid = useRef<HTMLVideoElement>(null);
   const [dim, setDim] = useState(false);
+  const nativeStage = useRef<HTMLDivElement>(null);
+  const dimRef = useRef(dim); dimRef.current = dim;
+  // iPhone app: the camera picture is a native view kept on top of this box
+  const nativeLive = isNativeIOS && (r.status === 'live' || r.status === 'paused');
+  useEffect(() => {
+    if (!nativeLive || !nativeStage.current) return;
+    return followPreview(nativeStage.current, () => !dimRef.current);
+  }, [nativeLive, dim, r.streamId]);
   const [fx, setFx] = useState(false);
   /** stop / restart throw the buffer away, so with something recorded they need a second tap */
   const [armed, setArmed] = useState<'' | 'stop' | 'restart'>('');
@@ -202,13 +211,20 @@ export function ReplayView() {
             {r.silent && <span className="pill soon">소리 없음 (이 기기 미지원)</span>}
             <span className={'pill ' + (r.awake ? 'on' : 'soon')}>{r.awake ? '화면 꺼짐 방지' : '화면 자동 꺼짐 주의'}</span>
           </div>
-          <div className="stage">
+          {isNativeIOS ? <>
+            <div className="stage native" ref={nativeStage} aria-label="카메라 화면" />
+            <div className="nativebar">
+              <span className="recdot"><i />REC {hms((Date.now() - r.startedAt) / 1000)}{r.actual && <span className="mono sub"> · {r.actual}{r.encoder && ' ' + r.encoder}</span>}</span>
+              <div className="buf"><span>버퍼 {fmtLen(Math.floor(Math.min(r.buffered, MAX_LEN)))}</span><span className="bar"><i style={{ width: Math.min(100, (r.buffered / MAX_LEN) * 100) + '%' }} /></span><span>{fmtLen(MAX_LEN)}</span></div>
+              {r.zoomOptions.length > 1 && <div className="zoombar" role="group" aria-label="배율">{r.zoomOptions.map(z => <button key={z} id={'rpZoom' + String(z).replace('.', '_')} aria-pressed={r.zoom === z} disabled={r.zoomBusy} onClick={() => replay.setZoom(z)}>{zoomLabel(z, r.zoom === z)}</button>)}</div>}
+            </div>
+          </> : <div className="stage">
             <video ref={vid} muted playsInline autoPlay />
             <div className="hud"><span className="recdot"><i />REC {hms((Date.now() - r.startedAt) / 1000)}</span></div>
             <div className="buf"><span>버퍼 {fmtLen(Math.floor(Math.min(r.buffered, MAX_LEN)))}</span><span className="bar"><i style={{ width: Math.min(100, (r.buffered / MAX_LEN) * 100) + '%' }} /></span><span>{fmtLen(MAX_LEN)}</span></div>
             <div className={'flashfx' + (fx ? ' go' : '')} />
             {r.zoomOptions.length > 1 && <div className="zoombar" role="group" aria-label="배율">{r.zoomOptions.map(z => <button key={z} id={'rpZoom' + String(z).replace('.', '_')} aria-pressed={r.zoom === z} disabled={r.zoomBusy} onClick={() => replay.setZoom(z)}>{zoomLabel(z, r.zoom === z)}</button>)}</div>}
-          </div>
+          </div>}
           {r.mode === 'compat' && <p className="sub" style={{ margin: '8px 0 0', fontSize: 12 }}>이 브라우저는 영상을 정확히 자르지 못해서 길이를 고를 수 없고, 직전 1~2분이 저장돼요. 안드로이드는 크롬, 아이폰은 최신 iOS의 사파리에서 길이를 골라 정확히 저장할 수 있어요.</p>}
           {r.status === 'paused' && (
             <div className="errbox" style={{ marginTop: 12 }}><b>카메라가 멈췄어요.</b> 화면을 벗어나 있으면 녹화가 멈춰요.
@@ -244,7 +260,7 @@ export function ReplayView() {
             <div className="crow"><span>소리 녹음</span>
               <div className="seg">{[true, false].map(a => <button key={String(a)} aria-pressed={r.cfg.audio === a} onClick={() => r.cfg.audio !== a && setCfg({ audio: a }, a ? '소리도 녹음해요' : '소리 없이 녹화해요')}>{a ? '켜기' : '끄기'}</button>)}</div></div>
             <div className="row">
-              <button className="btn" style={{ flex: '1 1 auto' }} onClick={() => setCfg({ facing: r.cfg.facing === 'environment' ? 'user' : 'environment' }, r.cfg.facing === 'environment' ? '앞 카메라로 바꿨어요' : '뒤 카메라로 바꿨어요')}>카메라 전환</button>
+              {!isNativeIOS && <button className="btn" style={{ flex: '1 1 auto' }} onClick={() => setCfg({ facing: r.cfg.facing === 'environment' ? 'user' : 'environment' }, r.cfg.facing === 'environment' ? '앞 카메라로 바꿨어요' : '뒤 카메라로 바꿨어요')}>카메라 전환</button>}
               <button className="btn" style={{ flex: '1 1 auto' }} onClick={() => setDim(true)}>화면 어둡게</button>
             </div>
           </div>

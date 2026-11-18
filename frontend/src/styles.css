@@ -205,3 +205,14 @@ nav.tabs svg{width:22px;height:22px}
 .station .crow small{line-height:1.45}
 .station .crow+.crow{margin-top:14px}
 .exported{color:var(--accent);font-weight:600}
+
+/* iPhone app: the camera picture is a native view placed over this box */
+.stage.native{background:#111;aspect-ratio:3/4;max-height:62vh;margin:0 auto}
+.nativebar{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.nativebar .buf{position:static;background:var(--surface);color:var(--ink);border:1px solid var(--line)}
+.nativebar .zoombar{position:static;transform:none;align-self:center;background:var(--surface);border:1px solid var(--line)}
+.nativebar .zoombar button{background:transparent;color:var(--ink)}
+.nativebar .zoombar button[aria-pressed=true]{background:var(--ink);color:var(--surface)}
+.nativebar .recdot{align-self:flex-start;background:var(--surface);color:var(--ink);border:1px solid var(--line);padding:6px 12px;border-radius:999px;font-size:13px}
+.nativebar .recdot .sub{color:var(--muted)}
+.nativebar .recdot .sub{margin:0}

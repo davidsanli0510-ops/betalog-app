@@ -1,8 +1,11 @@
 import { useSyncExternalStore } from 'react';
 import { pad } from '../data/util';
+import { BetaReplay, fileUrl } from './nativeReplay';
 
 export interface Clip {
-  id: string; date: number; len: number; type: string; size: number; blob: Blob; url: string; memOnly?: boolean;
+  id: string; date: number; len: number; type: string; size: number; url: string; memOnly?: boolean;
+  /** the video itself: in the browser's storage (website), or a file in the iPhone app's folder (`path`) */
+  blob?: Blob; path?: string;
   /** still picture for the list (JPEG); 'none' when one could not be made */
   thumb?: Blob | 'none'; thumbUrl?: string;
   /** when it was put in the phone's gallery (download / share) */
@@ -72,7 +75,10 @@ async function grab(url: string): Promise<Blob | null> {
   } catch { return null; } finally { v.removeAttribute('src'); v.load(); v.remove(); }
 }
 /** a copy in memory: Safari sometimes can't play a video straight from IndexedDB */
-async function memCopy(c: Clip, type = c.type) { return URL.createObjectURL(new Blob([await c.blob.arrayBuffer()], { type })); }
+async function memCopy(c: Clip, type = c.type) {
+  if (!c.blob) throw new Error('no blob'); // app clips are plain files and play from their URL
+  return URL.createObjectURL(new Blob([await c.blob.arrayBuffer()], { type }));
+}
 /** a .mov is laid out like an .mp4; browsers other than Safari only accept it under the mp4 name */
 const altType = (c: Clip) => (c.type.includes('quicktime') ? 'video/mp4' : null);
 const memUrls = new Map<string, string>();
@@ -100,7 +106,7 @@ export const Clips = {
   async load() {
     try {
       const all = (await tx<Omit<Clip, 'url'>[]>('readonly', s => s.getAll())) || [];
-      items = all.map(c => withThumbUrl({ ...c, url: URL.createObjectURL(c.blob) } as Clip)).sort((a, b) => b.date - a.date);
+      items = all.map(c => withThumbUrl({ ...c, url: c.path ? fileUrl(c.path) : URL.createObjectURL(c.blob!) } as Clip)).sort((a, b) => b.date - a.date);
     } catch { items = []; }
     emit();
     makeThumbs();
@@ -114,9 +120,19 @@ export const Clips = {
     makeThumbs();
     return ok;
   },
+  /** a clip recorded by the iPhone app: the file stays in the app's folder, only its details go to storage */
+  async addFile(meta: Omit<Clip, 'url' | 'blob' | 'path'>, path: string): Promise<boolean> {
+    const c: Clip = { ...meta, path, url: fileUrl(path) };
+    items.unshift(c); emit();
+    let ok = true;
+    try { await tx('readwrite', s => s.put(strip(c))); } catch { c.memOnly = true; emit(); ok = false; }
+    makeThumbs();
+    return ok;
+  },
   async del(id: string) {
     const c = items.find(x => x.id === id);
-    if (c) { URL.revokeObjectURL(c.url); if (c.thumbUrl) URL.revokeObjectURL(c.thumbUrl); }
+    if (c) { if (!c.path) URL.revokeObjectURL(c.url); if (c.thumbUrl) URL.revokeObjectURL(c.thumbUrl); }
+    if (c?.path) BetaReplay.deleteClip({ path: c.path }).catch(() => {});
     const m = memUrls.get(id); if (m) { URL.revokeObjectURL(m); memUrls.delete(id); }
     items = items.filter(x => x.id !== id); emit();
     try { await tx('readwrite', s => s.delete(id)); } catch { /* ignore */ }

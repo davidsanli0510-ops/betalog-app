@@ -1,4 +1,6 @@
 import { isAndroid, isIOS } from './platform';
+import type { Clip } from './replay/clips';
+import { BetaReplay } from './replay/nativeReplay';
 
 /* ---------- keep the screen on while recording ---------- */
 let wake: WakeLockSentinel | null = null;
@@ -23,7 +25,7 @@ export const screenKeptOn = () => !!wake;
  * iPhone: the share sheet has "Save Video" (to Photos).
  * Android: a download lands in Download, which Samsung Gallery and Google Photos show as an album;
  * the Android share sheet has no "save to gallery", so it is only the fallback there. */
-export type SaveResult = 'shared' | 'downloaded' | 'cancelled' | 'failed';
+export type SaveResult = 'photos' | 'shared' | 'downloaded' | 'cancelled' | 'failed';
 function download(blob: Blob, name: string) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
@@ -38,8 +40,18 @@ export async function saveVideo(blob: Blob, name: string): Promise<SaveResult> {
   }
   try { download(blob, name); return 'downloaded'; } catch { return 'failed'; }
 }
+/** puts a saved clip in the phone's gallery: the iPhone app adds it to Photos directly, the website as above */
+export async function saveClip(c: Clip, name: string): Promise<SaveResult> {
+  if (c.path) {
+    try { await BetaReplay.saveToPhotos({ path: c.path }); return 'photos'; }
+    catch (e) { lastError = (e as Error).message || ''; return 'failed'; }
+  }
+  return c.blob ? saveVideo(c.blob, name) : 'failed';
+}
+let lastError = '';
 export const saveLabel = isIOS ? '사진첩에 저장' : '갤러리에 저장';
 export const savedMessage = (r: SaveResult) =>
-  r === 'downloaded' ? (isAndroid ? '저장했어요. 갤러리의 Download 앨범에서 볼 수 있어요' : '파일로 받았어요')
+  r === 'photos' ? '사진첩에 저장했어요'
+  : r === 'downloaded' ? (isAndroid ? '저장했어요. 갤러리의 Download 앨범에서 볼 수 있어요' : '파일로 받았어요')
   : r === 'shared' ? (isIOS ? "공유 메뉴에서 '비디오 저장'을 누르면 사진첩에 들어가요" : '공유 메뉴를 열었어요')
-  : r === 'failed' ? '저장하지 못했어요' : '취소했어요';
+  : r === 'failed' ? (lastError || '저장하지 못했어요') : '취소했어요';

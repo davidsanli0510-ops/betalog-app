@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { ls } from '../data/util';
 import { isIOS } from '../platform';
+import { isNativeIOS } from './nativeReplay';
 
 /**
  * Spare-phone settings: a phone left on a tripod all day as the replay camera.
@@ -10,8 +11,8 @@ import { isIOS } from '../platform';
  * - keepRecent: once clips are in the gallery, keep only the newest ones in the app to save space.
  */
 export interface Station { autoSave: boolean; autoResume: boolean; keepRecent: boolean }
-/** iPhone can only save through the share sheet, which needs a fresh tap, so auto-save is Android/PC only */
-export const canAutoSave = !isIOS;
+/** iPhone Safari can only save through the share sheet, which needs a fresh tap; the iPhone app can */
+export const canAutoSave = !isIOS || isNativeIOS; // the iPhone app adds to Photos directly
 export const KEEP_RECENT = 10;
 
 let st: Station = { autoSave: false, autoResume: false, keepRecent: false, ...ls.get<Partial<Station>>('station', {}) };

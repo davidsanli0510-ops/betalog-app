@@ -88,14 +88,25 @@ public class BetaReplayPlugin: CAPPlugin, CAPBridgedPlugin {
         let r = CGRect(x: call.getDouble("x") ?? 0, y: call.getDouble("y") ?? 0,
                        width: call.getDouble("width") ?? 0, height: call.getDouble("height") ?? 0)
         let radius = CGFloat(call.getDouble("radius") ?? 14)
+        let clipTop = CGFloat(call.getDouble("clipTop") ?? -1e6)
+        let clipBottom = CGFloat(call.getDouble("clipBottom") ?? 1e6)
         DispatchQueue.main.async {
             self.ensurePreview()
             guard let v = self.preview, let web = self.webView else { return call.resolve() }
+            // only the part between the page's header and tab bar is shown; the picture itself doesn't move
+            let band = CGRect(x: -1e6, y: clipTop, width: 2e6, height: max(0, clipBottom - clipTop))
+            let shown = r.intersection(band)
             let origin = web.frame.origin
-            v.frame = r.offsetBy(dx: origin.x, dy: origin.y)
-            v.layer.cornerRadius = radius
-            self.previewLayer?.frame = v.bounds
-            v.isHidden = !visible || r.width < 2 || r.height < 2 || !self.recorder.recording
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            if shown.isNull || shown.height < 2 || r.width < 2 {
+                v.isHidden = true
+            } else {
+                v.frame = shown.offsetBy(dx: origin.x, dy: origin.y)
+                v.layer.cornerRadius = shown.height == r.height ? radius : 0
+                self.previewLayer?.frame = CGRect(x: r.minX - shown.minX, y: r.minY - shown.minY, width: r.width, height: r.height)
+                v.isHidden = !visible || !self.recorder.recording
+            }
+            CATransaction.commit()
             call.resolve()
         }
     }

@@ -18,11 +18,21 @@
 
 한 번 열어 두면 인터넷이 안 될 때도 열려요.
 
+### 아이폰 앱 (AltStore, 무료)
+
+아이폰 카메라 화질 그대로 리플레이를 녹화하는 앱이에요. App Store가 아니라 AltStore로 설치해요.
+
+1. PC에 AltStore(altstore.io)를 설치하고, 아이폰에 AltStore를 넣어요.
+2. 아이폰에서 GitHub의 **Releases → ios-1.0.x → BetaLog.ipa**를 받아요.
+3. AltStore → My Apps → **+** → BetaLog.ipa를 골라 설치해요.
+4. 무료 애플 계정이라 **7일마다** AltStore에서 Refresh가 필요해요(PC의 AltServer가 같은 와이파이에 켜져 있으면 자동).
+
 ## 구조
 
 ```
-frontend/   React + TypeScript (Vite) 웹 앱
-.github/    웹(GitHub Pages) 자동 배포
+frontend/       React + TypeScript (Vite) 웹 앱
+frontend/ios/   아이폰 앱(Capacitor) — 리플레이 녹화기: ios/App/CapApp-SPM/Sources/CapApp-SPM/
+.github/        웹(GitHub Pages) 배포, 아이폰 앱(.ipa) 빌드
 ```
 
 ## 개발

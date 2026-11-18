@@ -5,6 +5,7 @@ import { station } from './station';
 import { toast } from '../data/store';
 import { ls } from '../data/util';
 import { ExactRing, canEncode, exactSupported, probeEncoder } from './ring';
+import { BetaReplay, isNativeIOS, type NativeInfo } from './nativeReplay';
 
 /**
  * Replay buffer: the camera keeps recording, and "save" keeps exactly the last `len` seconds before the press.
@@ -104,6 +105,7 @@ class ReplayEngine {
   }
   private make(): ReplaySnap {
     const o = this.byAge()[0];
+    if (this.nativeOn) return { ...this.st, silent: this.nb.silent, awake: true, buffered: this.nb.buffered, cfg: { ...this.cfg } };
     const buffered = this.ring ? this.ring.buffered() : o ? o.age() : 0;
     const silent = !!this.ring && this.cfg.audio && !this.ring.audio;
     return { ...this.st, silent, awake: screenKeptOn(), buffered, cfg: { ...this.cfg } };
@@ -113,8 +115,16 @@ class ReplayEngine {
   getSnap = () => this.snap;
   private byAge() { return this.segs.filter(s => s.rec).sort((a, b) => b.age() - a.age()); }
 
+  /** true while recording through the iPhone app's own camera recorder */
+  private nativeOn = false;
+  /** what the app's recorder last reported */
+  private nb = { buffered: 0, silent: false };
+  private nativeEvents = false;
+  /** the camera is on (browser stream or the app's recorder) */
+  get isOn() { return !!this.stream || this.nativeOn; }
+
   setCfg(patch: Partial<ReplayCfg>) {
-    const restart = this.stream && (('res' in patch && patch.res !== this.cfg.res) || ('audio' in patch && patch.audio !== this.cfg.audio) || ('facing' in patch && patch.facing !== this.cfg.facing));
+    const restart = this.isOn && (('res' in patch && patch.res !== this.cfg.res) || ('audio' in patch && patch.audio !== this.cfg.audio) || ('facing' in patch && patch.facing !== this.cfg.facing));
     if ('facing' in patch && patch.facing !== this.cfg.facing) { patch = { ...patch, zoom: 1 }; this.useUltra = false; this.ultraId = null; }
     this.cfg = { ...this.cfg, ...patch }; ls.set('replayCfg', this.cfg); this.emit();
     if (restart) return this.restart();
@@ -131,6 +141,7 @@ class ReplayEngine {
     return navigator.mediaDevices.getUserMedia({ video, audio });
   }
   async start(): Promise<boolean> {
+    if (isNativeIOS) return this.startNative();
     if (this.stream) return true;
     this.st.error = null;
     if (!window.isSecureContext) { this.st.error = '보안 연결(https) 주소나 앱에서만 카메라를 쓸 수 있어요.'; this.emit(); return false; }
@@ -187,6 +198,61 @@ class ReplayEngine {
     const big = Math.max(c?.width?.max || 0, c?.height?.max || 0) >= 3840 && Math.min(c?.width?.max || 0, c?.height?.max || 0) >= 2160;
     this.st.can4k = this.cfg.res === 2160 ? big || this.st.can4k : big && this.st.mode !== 'compat' && !!this.exactOk && await canEncode(2160, BPS[2160]).catch(() => false);
   }
+  /* ---------- iPhone app: the app's own recorder (full camera quality) ---------- */
+  private applyNative(i: NativeInfo) {
+    this.nb.buffered = i.buffered;
+    this.st.zoomOptions = i.zoomOptions.length ? i.zoomOptions : [1];
+    this.st.zoom = i.zoom;
+    this.st.actual = i.resolution >= 2160 ? '4K' : i.resolution + 'p';
+    this.st.encoder = i.codec; this.st.hw = i.codec ? true : null;
+    this.nb.silent = this.cfg.audio && !i.audio;
+  }
+  private async startNative(): Promise<boolean> {
+    if (this.nativeOn) return true;
+    this.st.error = null; this.st.status = 'starting'; this.emit();
+    if (!this.nativeEvents) {
+      this.nativeEvents = true;
+      BetaReplay.addListener('replayEvent', e => {
+        if (!this.nativeOn) return;
+        if (e.type === 'interrupted') toast('카메라가 잠시 멈췄어요');
+        else if (e.type === 'resumed') toast('카메라가 돌아와서 버퍼를 새로 시작했어요');
+        else if (e.type === 'error') toast('카메라 오류: ' + (e.message || ''));
+      }).catch(() => {});
+    }
+    try {
+      const i = await BetaReplay.start({ resolution: this.cfg.res, audio: this.cfg.audio });
+      this.nativeOn = true;
+      this.applyNative(i);
+      this.st.can4k = true;
+      this.st.mode = 'exact'; this.st.single = false;
+      this.st.status = 'live'; this.st.startedAt = this.st.startedAt || Date.now(); this.st.streamId++;
+      if (this.cfg.zoom && this.cfg.zoom !== 1 && this.st.zoomOptions.includes(this.cfg.zoom)) {
+        try { this.st.zoom = (await BetaReplay.setZoom({ zoom: this.cfg.zoom })).zoom; } catch { /* stay at 1× */ }
+      }
+      clearInterval(this.tick); this.tick = setInterval(() => this.onTick(), 1000);
+      this.emit(); return true;
+    } catch (e) {
+      this.st.status = 'off'; this.st.error = (e as Error).message || '카메라를 켜지 못했어요'; this.emit(); return false;
+    }
+  }
+  private polling = false;
+  private async pollNative() {
+    if (this.polling) return; this.polling = true;
+    try { this.applyNative(await BetaReplay.status()); this.emit(); } catch { /* next second */ } finally { this.polling = false; }
+  }
+  private async saveNative(len: number): Promise<{ ok: true; id: string; len: number; stored: boolean; silent?: boolean } | { ok: false; message: string }> {
+    this.st.saving = true; this.st.saveError = null; this.emit();
+    try {
+      const c = await BetaReplay.save({ seconds: len, toPhotos: false });
+      const id = 'c' + Date.now();
+      const stored = await Clips.addFile({ id, date: Date.now(), len: Math.round(c.seconds), type: 'video/quicktime', size: c.size }, c.path);
+      return { ok: true, id, len: Math.round(c.seconds), stored, silent: this.nb.silent };
+    } catch (e) {
+      this.st.saveError = String((e as Error).message || e).slice(0, 200);
+      return { ok: false, message: '저장하지 못했어요. 아래 원인을 캡처해서 알려주세요' };
+    } finally { this.st.saving = false; this.emit(); }
+  }
+
   private get videoTrack() { return this.stream?.getVideoTracks()[0]; }
   /** works out which zoom steps this device offers and applies the saved one */
   private async detectZoom() {
@@ -221,6 +287,11 @@ class ReplayEngine {
   }
   /** changes the zoom. Within one lens the recording keeps going; 0.5× on a separate ultra-wide lens restarts the camera */
   async setZoom(z: number): Promise<boolean> {
+    if (this.nativeOn) {
+      if (z === this.st.zoom || !this.st.zoomOptions.includes(z)) return false;
+      try { const r = await BetaReplay.setZoom({ zoom: z }); this.st.zoom = r.zoom; this.cfg = { ...this.cfg, zoom: z }; ls.set('replayCfg', this.cfg); this.emit(); return true; }
+      catch { toast('이 배율로 바꾸지 못했어요'); return false; }
+    }
     if (!this.stream || this.st.zoomBusy || z === this.st.zoom || !this.st.zoomOptions.includes(z)) return false;
     this.cfg = { ...this.cfg, zoom: z }; ls.set('replayCfg', this.cfg);
     const caps = this.zoomCaps;
@@ -269,6 +340,7 @@ class ReplayEngine {
     this.begin(); this.emit();
   }
   private onTick() {
+    if (this.nativeOn) { this.pollNative(); return; }
     if (this.ring) {
       // lag watch: if the phone skips many frames for a while, suggest a lower resolution
       const r = this.ring.dropRate();
@@ -287,6 +359,7 @@ class ReplayEngine {
   }
   stop() {
     this.cancelResume();
+    if (this.nativeOn) { this.nativeOn = false; BetaReplay.stop().catch(() => {}); }
     clearInterval(this.tick); this.stopRecorders();
     this.stream?.getTracks().forEach(t => t.stop()); this.stream = null;
     this.st = { ...this.st, status: 'off', startedAt: 0, saving: false };
@@ -337,8 +410,9 @@ class ReplayEngine {
   /** saves the recent footage as a clip; returns its length in seconds or an error message */
   /** saves the last `len` seconds (default: the length picked last time) */
   async save(len?: number): Promise<{ ok: true; id: string; len: number; stored: boolean; silent?: boolean } | { ok: false; message: string }> {
-    if (this.st.saving || !this.stream) return { ok: false, message: '녹화 중이 아니에요' };
+    if (this.st.saving || !this.isOn) return { ok: false, message: '녹화 중이 아니에요' };
     if (len && len !== this.cfg.len) { this.cfg = { ...this.cfg, len }; ls.set('replayCfg', this.cfg); }
+    if (this.nativeOn) return this.saveNative(this.cfg.len);
     if (this.ring) {
       let out: { blob: Blob; len: number; dropped: boolean } | null = null;
       try { out = this.ring.save(this.cfg.len); }

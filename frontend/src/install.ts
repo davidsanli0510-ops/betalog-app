@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { isAndroid, isIOS, isSamsungBrowser } from './platform';
+import { isNativeIOS } from './replay/nativeReplay';
 import { ls } from './data/util';
 
 /**
@@ -8,7 +9,7 @@ import { ls } from './data/util';
  */
 export { isIOS };
 export const isStandalone = () =>
-  matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  isNativeIOS || matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
 
 let persisted: boolean | null = null;
 /** asks the browser to keep our data; harmless where it is not supported */
@@ -29,7 +30,7 @@ window.addEventListener('appinstalled', () => { promptEv = null; ls.set('install
 
 /** registers the offline helper (production build only), so the app opens even with a weak signal at the gym */
 export function registerOffline() {
-  if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+  if (isNativeIOS || !import.meta.env.PROD || !('serviceWorker' in navigator)) return; // the app carries its own files
   window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => { /* not fatal */ }); });
 }
 

@@ -27,7 +27,7 @@ export const CameraShot = memo(function CameraShot() {
   const [err, setErr] = useState('');
 
   function open(el: HTMLInputElement | null, camera: boolean) {
-    if (camera && replay.stream) { replay.stop(); toast('기본 카메라를 쓰려고 리플레이를 껐어요'); }
+    if (camera && replay.isOn) { replay.stop(); toast('기본 카메라를 쓰려고 리플레이를 껐어요'); }
     setErr(''); setMovie(null); setRaw(null);
     el?.click();
   }
