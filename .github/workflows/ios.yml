@@ -1,0 +1,68 @@
+# Builds the iPhone app as an unsigned .ipa for AltStore (AltStore signs it with the user's own Apple ID).
+# No Apple developer account or certificates are needed, and no secrets are used.
+name: iPhone app (AltStore)
+
+on:
+  push:
+    branches: [main]
+    paths: ['frontend/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build the web part and copy it into the iOS project
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+          npx cap sync ios
+
+      - name: Build the app (unsigned)
+        working-directory: frontend/ios/App
+        run: |
+          set -o pipefail
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            MARKETING_VERSION=1.0.${{ github.run_number }} CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tail -n 80
+
+      - name: Package .ipa
+        working-directory: frontend/ios/App
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry BetaLog.ipa Payload
+          ls -la BetaLog.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BetaLog-ipa
+          path: frontend/ios/App/BetaLog.ipa
+
+      - name: Publish for AltStore
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="ios-1.0.${{ github.run_number }}"
+          gh release create "$tag" frontend/ios/App/BetaLog.ipa \
+            --title "베타로그 아이폰 앱 1.0.${{ github.run_number }}" \
+            --notes "AltStore로 설치하는 아이폰 앱이에요. BetaLog.ipa를 받아 AltStore의 + 버튼으로 설치하세요." \
+            --latest

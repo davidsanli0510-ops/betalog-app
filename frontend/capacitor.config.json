@@ -1,0 +1,11 @@
+{
+  "appId": "com.betalog.app",
+  "appName": "베타로그",
+  "webDir": "dist",
+  "ios": {
+    "contentInset": "never",
+    "scrollEnabled": true,
+    "allowsLinkPreview": false,
+    "backgroundColor": "#f3f1ec"
+  }
+}
